@@ -30,7 +30,8 @@ export default function App() {
       focusDuration: 25,
       breakDuration: 5,
       soundEnabled: true,
-      sensitivity: 2
+      sensitivity: 2,
+      theme: 'dark'
     };
   });
 
@@ -103,32 +104,24 @@ export default function App() {
     // Increment total detected counts
     setPhoneCount(p => p + 1);
 
-    // Dynamic chances threshold based on sensitivity slider
-    // Relaxed (1): 3 free chances before full alarm
-    // Balanced (2): 2 free chances
-    // Strict (3): 1 free chance
-    const maxFreeChances = settings.sensitivity === 1 ? 3 : settings.sensitivity === 3 ? 1 : 2;
-
     setPhoneChancesUsed(prev => {
       const nextChances = prev + 1;
       
-      if (nextChances <= maxFreeChances) {
-        if (nextChances === 1) {
-          // 1st chance: gentle popup with no sound
-          addToast("Hey, I noticed your phone — let's stay focused 🙂", "info");
-        } else {
-          // Subsequent chances: firmer popup with soft chime sound
-          if (soundEnabledRef.current) {
-            playSoftBeep();
-          }
-          addToast(`Phone again? Try to put it aside for this session. (Chance ${nextChances}/${maxFreeChances})`, "info");
+      if (nextChances === 1) {
+        // 1st time: gentle on-screen message only, no sound
+        addToast("I noticed your phone, let's stay focused.", "info");
+      } else if (nextChances === 2) {
+        // 2nd time: firmer message + soft sound
+        if (soundEnabledRef.current) {
+          playSoftBeep();
         }
+        addToast("Phone detected again. Please put your phone aside, let's lock in! 📱", "info");
       } else {
-        // Exceeded free chances: full distraction alert
+        // 3rd time onward: full alert with loud sound + visible warning
         if (soundEnabledRef.current) {
           playAlertBeep();
         }
-        addToast("Phone detected! Strict focus alert active 📱🚨", "distracted");
+        addToast("Phone holding violation! Strict focus alert active 📱🚨", "distracted");
         setDistractedAlertCount(c => c + 1);
       }
       return nextChances;
@@ -437,7 +430,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0F] text-[#F5F5F7] flex flex-col relative pb-12 transition-all selection:bg-indigo-600/30 selection:text-white">
+    <div className={`min-h-screen bg-[#0A0A0F] text-[#F5F5F7] flex flex-col relative pb-12 transition-all selection:bg-indigo-600/30 selection:text-white ${settings.theme === 'light' ? 'light-theme' : ''}`}>
       
       {/* Absolute floating stack top-right toast tracker */}
       <div id="toast-tracker-overlay" className="fixed top-4 right-4 z-50 flex flex-col space-y-2 max-w-sm w-full font-sans select-none pointer-events-none">

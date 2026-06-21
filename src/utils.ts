@@ -23,14 +23,19 @@ export function playAlertBeep() {
     gainNode.connect(audioCtx.destination);
 
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(440, audioCtx.currentTime); // 440Hz beep
+    osc.frequency.setValueAtTime(900, audioCtx.currentTime); // Piercing 900Hz
     
-    // Smooth volume fade-out over 0.25s
-    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+    // Piercing loud volume, linear ramp-up to dodge browser popping
+    gainNode.gain.setValueAtTime(0.01, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.95, audioCtx.currentTime + 0.05);
+    
+    // Hold sustain at near maximum volume and decay gently at the absolute end
+    const duration = 0.7; // At least 0.6 seconds
+    gainNode.gain.setValueAtTime(0.95, audioCtx.currentTime + duration - 0.1);
+    gainNode.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + duration);
 
     osc.start(audioCtx.currentTime);
-    osc.stop(audioCtx.currentTime + 0.3);
+    osc.stop(audioCtx.currentTime + duration);
   } catch (err) {
     console.warn('Failed to play alert beep via Web Audio API:', err);
   }

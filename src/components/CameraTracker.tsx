@@ -29,7 +29,7 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const [cameraAllowed, setCameraAllowed] = useState<boolean | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
-  // Real or Simulation State
+  // Real or Simulation State Choice
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulatedSetting, setSimulatedSetting] = useState<FocusState>(FocusState.FOCUSED);
   const [simulatedDrowsy, setSimulatedDrowsy] = useState(false);
@@ -46,21 +46,18 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const [currentAsymmetry, setCurrentAsymmetry] = useState<number | null>(null);
   const [facePositionOffset, setFacePositionOffset] = useState<number | null>(null);
   
-  // Look Away Distraction grace period tracking
+  // Distraction grace tracking counters in ticks (1 tick = 500ms, 10 ticks = 5.0 seconds)
   const consecutiveDistractionTicksRef = useRef<number>(0);
   const [distractionGraceSeconds, setDistractionGraceSeconds] = useState<number>(0);
 
-  // Handheld phone distraction grace tracking
   const consecutivePhoneTicksRef = useRef<number>(0);
   const [phoneGraceSeconds, setPhoneGraceSeconds] = useState<number>(0);
 
-  // Erratic motion distraction grace tracking
   const consecutiveMovementTicksRef = useRef<number>(0);
   const [movementGraceSeconds, setMovementGraceSeconds] = useState<number>(0);
 
-  // Frame translation relative position memory
+  // Erratic motion movement tracking
   const lastNosePositionRef = useRef<{ x: number, y: number } | null>(null);
-  const isErraticMovementDetectedRef = useRef<boolean>(false);
   const [liveErraticMotionDetected, setLiveErraticMotionDetected] = useState(false);
 
   // Trigger period lockout states
@@ -70,11 +67,9 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
   // Timers and stream references
   const streamRef = useRef<MediaStream | null>(null);
-  const detectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastStateRef = useRef<FocusState>(currentState);
-  const awayTimerStartRef = useRef<number | null>(null); // To buffer AWAY state until > 4 seconds
+  const awayTimerStartRef = useRef<number | null>(null); // To buffer AWAY state until > 5 seconds
 
-  // Keep copies of props/state in refs so our single-setup interval always reads the latest values without closures going stale
+  // Refs to anchor values and prevent stale closure traps inside the frame loop
   const isSimulatingRef = useRef(isSimulating);
   const sensitivityRef = useRef(sensitivity);
   const onDrowsinessChangeRef = useRef(onDrowsinessChange);
@@ -82,65 +77,23 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const onPhoneOccurrenceRef = useRef(onPhoneOccurrence);
   const onMovementOccurrenceRef = useRef(onMovementOccurrence);
   const onLookAwayOccurrenceRef = useRef(onLookAwayOccurrence);
-
-  useEffect(() => {
-    isSimulatingRef.current = isSimulating;
-  }, [isSimulating]);
-
-  useEffect(() => {
-    sensitivityRef.current = sensitivity;
-  }, [sensitivity]);
-
-  useEffect(() => {
-    onDrowsinessChangeRef.current = onDrowsinessChange;
-  }, [onDrowsinessChange]);
-
-  useEffect(() => {
-    onStateChangeRef.current = onStateChange;
-  }, [onStateChange]);
-
-  useEffect(() => {
-    onPhoneOccurrenceRef.current = onPhoneOccurrence;
-  }, [onPhoneOccurrence]);
-
-  useEffect(() => {
-    onMovementOccurrenceRef.current = onMovementOccurrence;
-  }, [onMovementOccurrence]);
-
-  useEffect(() => {
-    onLookAwayOccurrenceRef.current = onLookAwayOccurrence;
-  }, [onLookAwayOccurrence]);
-
   const isSimulatingPhoneRef = useRef(isSimulatingPhone);
   const isSimulatingMovementRef = useRef(isSimulatingMovement);
   const simulatedSettingRef = useRef(simulatedSetting);
   const simulatedDrowsyRef = useRef(simulatedDrowsy);
-  const currentStateRef = useRef(currentState);
 
-  useEffect(() => {
-    isSimulatingPhoneRef.current = isSimulatingPhone;
-  }, [isSimulatingPhone]);
-
-  useEffect(() => {
-    isSimulatingMovementRef.current = isSimulatingMovement;
-  }, [isSimulatingMovement]);
-
-  useEffect(() => {
-    simulatedSettingRef.current = simulatedSetting;
-  }, [simulatedSetting]);
-
-  useEffect(() => {
-    simulatedDrowsyRef.current = simulatedDrowsy;
-  }, [simulatedDrowsy]);
-
-  useEffect(() => {
-    currentStateRef.current = currentState;
-  }, [currentState]);
-
-  // Keep track of state transitions in refs to avoid double triggers
-  useEffect(() => {
-    lastStateRef.current = currentState;
-  }, [currentState]);
+  // Synchronize refs on state changes
+  useEffect(() => { isSimulatingRef.current = isSimulating; }, [isSimulating]);
+  useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
+  useEffect(() => { onDrowsinessChangeRef.current = onDrowsinessChange; }, [onDrowsinessChange]);
+  useEffect(() => { onStateChangeRef.current = onStateChange; }, [onStateChange]);
+  useEffect(() => { onPhoneOccurrenceRef.current = onPhoneOccurrence; }, [onPhoneOccurrence]);
+  useEffect(() => { onMovementOccurrenceRef.current = onMovementOccurrence; }, [onMovementOccurrence]);
+  useEffect(() => { onLookAwayOccurrenceRef.current = onLookAwayOccurrence; }, [onLookAwayOccurrence]);
+  useEffect(() => { isSimulatingPhoneRef.current = isSimulatingPhone; }, [isSimulatingPhone]);
+  useEffect(() => { isSimulatingMovementRef.current = isSimulatingMovement; }, [isSimulatingMovement]);
+  useEffect(() => { simulatedSettingRef.current = simulatedSetting; }, [simulatedSetting]);
+  useEffect(() => { simulatedDrowsyRef.current = simulatedDrowsy; }, [simulatedDrowsy]);
 
   // Load face-api.js from CDN dynamically
   useEffect(() => {
@@ -150,7 +103,6 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
       try {
         setLoadingProgress('Connecting to computer vision server...');
         
-        // Load the main script if it doesn't exist
         if (!(window as any).faceapi) {
           const cdnUrls = [
             'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js',
@@ -181,12 +133,12 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
               }
             } catch (err) {
               lastScriptError = err;
-              console.warn(`CDN URL failed: ${url}. Attempting next backup CDN...`);
+              console.warn(`CDN URL failed: ${url}. Attempting backup...`);
             }
           }
           
           if (!scriptLoaded) {
-            throw lastScriptError || new Error('Failed to download computer vision engine from any available CDN source.');
+            throw lastScriptError || new Error('Failed to download computer vision engine.');
           }
         }
 
@@ -194,12 +146,10 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
         const faceapi = (window as any).faceapi;
         if (!faceapi) {
-          throw new Error('Face-API could not be loaded into memory.');
+          throw new Error('Face-API could not be loaded.');
         }
 
-        // Load tinyFaceDetector and faceLandmark68Net
         setLoadingProgress('Loading neural network models...');
-        
         const modelUris = [
           'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/',
           'https://unpkg.com/@vladmandic/face-api/model/'
@@ -220,12 +170,12 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
             break;
           } catch (err) {
             lastModelError = err;
-            console.warn(`Model loading failed from: ${uri}. Attempting next backup source...`);
+            console.warn(`Model loading failed from: ${uri}. Attempting backup...`);
           }
         }
         
         if (!modelsLoadedSuccessfully) {
-          throw lastModelError || new Error('Neural network models failed to download from any available CDN source.');
+          throw lastModelError || new Error('Neural network models failed to download.');
         }
 
         if (!active) return;
@@ -233,15 +183,13 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         setLoading(false);
         setLoadingProgress('');
         
-        // Try starting camera
         startCamera();
       } catch (err: any) {
-        console.error('Failed to initialize Face-API tracker:', err);
+        console.error('Failed to initialize Face-API:', err);
         if (active) {
-          setErrorMessage(err.message || 'Failed to load face detection library. Check your network.');
+          setErrorMessage(err.message || 'Failed to load face detection library.');
           setLoading(false);
-          // Auto fallback to simulator so app compiles and is fully testable!
-          setIsSimulating(true);
+          setIsSimulating(true); // Fallback to simulated mode
         }
       }
     }
@@ -250,16 +198,47 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
     return () => {
       active = false;
-      stopCameraAndTracking();
+      stopCamera();
     };
   }, []);
 
-  // Set up camera
+  // Frame processing loop using safe, non-blocking recursive setTimeout (evaluates frames every 500ms)
+  useEffect(() => {
+    let active = true;
+    let timerId: NodeJS.Timeout | null = null;
+
+    async function processFrameLoop() {
+      if (!active) return;
+
+      try {
+        if (isSimulatingRef.current) {
+          runSimulationTick();
+        } else {
+          await runRealCameraTick();
+        }
+      } catch (err) {
+        console.warn('Evaluation frame error:', err);
+      }
+
+      if (active) {
+        timerId = setTimeout(processFrameLoop, 500);
+      }
+    }
+
+    timerId = setTimeout(processFrameLoop, 1000);
+
+    return () => {
+      active = false;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, []);
+
+  // Start webcam
   async function startCamera() {
     try {
       setErrorMessage(null);
       if (streamRef.current) {
-        stopCameraAndTracking();
+        stopCamera();
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -277,293 +256,332 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play().catch(e => console.warn(e));
           setCameraAllowed(true);
-          startFaceTracking();
         };
       }
     } catch (err: any) {
-      console.warn('Webcam permission denied or unavailable:', err);
+      console.warn('Webcam access was denied or is unavailable:', err);
       setCameraAllowed(false);
-      setErrorMessage('Camera access was denied or is unavailable. Fallback to study simulation mode is enabled.');
+      setErrorMessage('Camera access denied or unavailable. Falling back to study simulator mode.');
       setIsSimulating(true);
     }
   }
 
-  function stopCameraAndTracking() {
-    if (detectionIntervalRef.current) {
-      clearInterval(detectionIntervalRef.current);
-      detectionIntervalRef.current = null;
-    }
+  function stopCamera() {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
   }
 
-  // Start face detection loop
-  function startFaceTracking() {
-    if (detectionIntervalRef.current) {
-      clearInterval(detectionIntervalRef.current);
+  // Draw cyber-emerald visual face landmarks contour tracking grid
+  const drawFaceMesh = (ctx: CanvasRenderingContext2D, landmarks: any) => {
+    const points = landmarks.positions;
+    
+    ctx.strokeStyle = '#10B981'; // emerald green
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = '#10B981';
+    ctx.shadowBlur = 4;
+
+    const drawPath = (start: number, end: number, close = false) => {
+      ctx.beginPath();
+      ctx.moveTo(points[start].x, points[start].y);
+      for (let i = start + 1; i <= end; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      if (close) {
+        ctx.lineTo(points[start].x, points[start].y);
+      }
+      ctx.stroke();
+    };
+
+    // Facial segments outline curves
+    drawPath(0, 16);          // Jawline
+    drawPath(17, 21);         // Left eyebrow
+    drawPath(22, 26);         // Right eyebrow
+    drawPath(27, 30);         // Nose bridge
+    drawPath(30, 35);         // Lower nose definition
+    drawPath(36, 41, true);   // Left eye
+    drawPath(42, 47, true);   // Right eye
+    drawPath(48, 59, true);   // Outer lips
+    drawPath(60, 67, true);   // Inner lips
+
+    // Highlight key vertices
+    ctx.fillStyle = '#8B5CF6'; // Violet accent points
+    ctx.shadowBlur = 0;
+    const vertexAesthetics = [0, 8, 16, 17, 21, 22, 26, 30, 33, 36, 39, 42, 45, 48, 54];
+    vertexAesthetics.forEach(idx => {
+      const pt = points[idx];
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 2.5, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+  };
+
+  // 1. SIMULATOR MODE TICK PROCESSOR (continuous 500ms calls)
+  function runSimulationTick() {
+    // Look Away Ticks
+    const lookAwayActive = simulatedSettingRef.current === FocusState.DISTRACTED && !simulatedDrowsyRef.current;
+    if (lookAwayActive) {
+      consecutiveDistractionTicksRef.current += 1;
+      const seconds = consecutiveDistractionTicksRef.current * 0.5;
+      setDistractionGraceSeconds(seconds);
+      
+      if (seconds >= 5) {
+        onStateChangeRef.current(FocusState.DISTRACTED);
+        if (!lookAwayTriggeredThisPeriodRef.current) {
+          lookAwayTriggeredThisPeriodRef.current = true;
+          onLookAwayOccurrenceRef.current();
+        }
+      } else {
+        onStateChangeRef.current(FocusState.FOCUSED);
+      }
+    } else {
+      consecutiveDistractionTicksRef.current = 0;
+      setDistractionGraceSeconds(0);
+      lookAwayTriggeredThisPeriodRef.current = false;
     }
+
+    // Phone Active Warning Ticks
+    const phoneActive = isSimulatingPhoneRef.current || (simulatedSettingRef.current === FocusState.DISTRACTED && simulatedDrowsyRef.current);
+    if (phoneActive) {
+      consecutivePhoneTicksRef.current += 1;
+      const seconds = consecutivePhoneTicksRef.current * 0.5;
+      setPhoneGraceSeconds(seconds);
+
+      if (seconds >= 5) {
+        if (!phoneTriggeredThisPeriodRef.current) {
+          phoneTriggeredThisPeriodRef.current = true;
+          onPhoneOccurrenceRef.current();
+        }
+      }
+    } else {
+      consecutivePhoneTicksRef.current = 0;
+      setPhoneGraceSeconds(0);
+      phoneTriggeredThisPeriodRef.current = false;
+    }
+
+    // Erratic Motion Active Ticks
+    const movementActive = isSimulatingMovementRef.current;
+    setLiveErraticMotionDetected(movementActive);
+    if (movementActive) {
+      consecutiveMovementTicksRef.current += 1;
+      const seconds = consecutiveMovementTicksRef.current * 0.5;
+      setMovementGraceSeconds(seconds);
+
+      if (seconds >= 5) {
+        if (!movementTriggeredThisPeriodRef.current) {
+          movementTriggeredThisPeriodRef.current = true;
+          onMovementOccurrenceRef.current();
+        }
+      }
+    } else {
+      consecutiveMovementTicksRef.current = 0;
+      setMovementGraceSeconds(0);
+      movementTriggeredThisPeriodRef.current = false;
+    }
+
+    // Away active simulation
+    if (simulatedSettingRef.current === FocusState.AWAY) {
+      onStateChangeRef.current(FocusState.AWAY);
+    } else if (simulatedSettingRef.current === FocusState.FOCUSED && !lookAwayActive) {
+      onStateChangeRef.current(FocusState.FOCUSED);
+    }
+
+    // Generate simulated coordinates/telemetry readouts
+    setCurrentEAR(simulatedDrowsyRef.current ? 0.13 : 0.28);
+    setCurrentAsymmetry(lookAwayActive ? 2.3 : 1.1);
+    setFacePositionOffset(lookAwayActive ? 0.35 : 0.04);
+  }
+
+  // 2. REAL WEB-CAMERA FRAME EVALUATOR
+  async function runRealCameraTick() {
+    const video = videoRef.current;
+    if (!video || video.paused || video.ended) return;
 
     const faceapi = (window as any).faceapi;
     if (!faceapi) return;
 
-    detectionIntervalRef.current = setInterval(async () => {
-      // Resolve dynamic thresholds based on sensitivity
-      const sensValue = sensitivityRef.current;
-      let maxGraceSeconds = 5; // Balanced default
-      let asymmetryThreshold = 1.65;
-      let offCenterThreshold = 0.25;
-      let awayThresholdSeconds = 5;
+    // Detect face
+    const detection = await faceapi.detectSingleFace(
+      video,
+      new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.45 })
+    ).withFaceLandmarks(true);
 
-      if (sensValue === 1) { // Relaxed
-        maxGraceSeconds = 8;
-        asymmetryThreshold = 2.0;
-        offCenterThreshold = 0.35;
-        awayThresholdSeconds = 8;
-      } else if (sensValue === 3) { // Strict
-        maxGraceSeconds = 2;
-        asymmetryThreshold = 1.35;
-        offCenterThreshold = 0.18;
-        awayThresholdSeconds = 3;
-      } else { // Balanced (2 or default)
-        maxGraceSeconds = 5;
-        asymmetryThreshold = 1.65;
-        offCenterThreshold = 0.25;
-        awayThresholdSeconds = 5;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+
+    if (!detection) {
+      // Clear facial contour canvas drawings
+      if (ctx && canvas) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
 
-      // -- BRACH A: SIMULATOR ACTIVE --
-      if (isSimulatingRef.current) {
-        // 1. Sideways Look grace calculation
-        const lookAwayActive = simulatedSettingRef.current === FocusState.DISTRACTED && !simulatedDrowsyRef.current;
-        if (lookAwayActive) {
-          consecutiveDistractionTicksRef.current += 1;
-          const currentDistractedSec = Math.floor(consecutiveDistractionTicksRef.current * 0.5);
-          setDistractionGraceSeconds(currentDistractedSec);
+      // No face detected! Set telemetry readings to null and shut down drowsiness alerts
+      setCurrentEAR(null);
+      setCurrentAsymmetry(null);
+      setFacePositionOffset(null);
+      onDrowsinessChangeRef.current(false);
 
-          if (currentDistractedSec >= maxGraceSeconds) {
-            onStateChangeRef.current(FocusState.DISTRACTED);
-            if (!lookAwayTriggeredThisPeriodRef.current) {
-              lookAwayTriggeredThisPeriodRef.current = true;
-              onLookAwayOccurrenceRef.current();
-            }
-          } else {
-            onStateChangeRef.current(FocusState.FOCUSED);
-          }
-        } else {
-          consecutiveDistractionTicksRef.current = 0;
-          setDistractionGraceSeconds(0);
-          lookAwayTriggeredThisPeriodRef.current = false;
-        }
+      // Settle down temporary sub-warning counts
+      consecutiveDistractionTicksRef.current = 0;
+      setDistractionGraceSeconds(0);
+      consecutivePhoneTicksRef.current = 0;
+      setPhoneGraceSeconds(0);
+      consecutiveMovementTicksRef.current = 0;
+      setMovementGraceSeconds(0);
 
-        // 2. Phone Active grace calculation
-        const phoneActive = isSimulatingPhoneRef.current || (simulatedSettingRef.current === FocusState.DISTRACTED && simulatedDrowsyRef.current);
-        if (phoneActive) {
-          consecutivePhoneTicksRef.current += 1;
-          const currentPhoneSec = Math.floor(consecutivePhoneTicksRef.current * 0.5);
-          setPhoneGraceSeconds(currentPhoneSec);
-
-          if (currentPhoneSec >= 5) {
-            if (!phoneTriggeredThisPeriodRef.current) {
-              phoneTriggeredThisPeriodRef.current = true;
-              onPhoneOccurrenceRef.current();
-            }
-          }
-        } else {
-          consecutivePhoneTicksRef.current = 0;
-          setPhoneGraceSeconds(0);
-          phoneTriggeredThisPeriodRef.current = false;
-        }
-
-        // 3. Erratic Movement grace calculation
-        const movementActive = isSimulatingMovementRef.current;
-        setLiveErraticMotionDetected(movementActive);
-        if (movementActive) {
-          consecutiveMovementTicksRef.current += 1;
-          const currentMovementSec = Math.floor(consecutiveMovementTicksRef.current * 0.5);
-          setMovementGraceSeconds(currentMovementSec);
-
-          if (currentMovementSec >= 5) {
-            if (!movementTriggeredThisPeriodRef.current) {
-              movementTriggeredThisPeriodRef.current = true;
-              onMovementOccurrenceRef.current();
-            }
-          }
-        } else {
-          consecutiveMovementTicksRef.current = 0;
-          setMovementGraceSeconds(0);
-          movementTriggeredThisPeriodRef.current = false;
-        }
-
-        // 4. Away state simulation
-        if (simulatedSettingRef.current === FocusState.AWAY) {
+      // Start buffer toward continuous AWAY (requires 5 continuous seconds)
+      if (awayTimerStartRef.current === null) {
+        awayTimerStartRef.current = Date.now();
+      } else {
+        const secondsDifference = (Date.now() - awayTimerStartRef.current) / 1000;
+        if (secondsDifference >= 5) {
           onStateChangeRef.current(FocusState.AWAY);
         }
-
-        // Update simulator feedback metrics
-        setCurrentEAR(simulatedDrowsyRef.current ? 0.14 : 0.28);
-        setCurrentAsymmetry(lookAwayActive ? 2.3 : 1.1);
-        setFacePositionOffset(lookAwayActive ? 0.35 : 0.04);
-        return;
       }
+      return;
+    }
 
-      // -- BRANCH B: REAL CAMERA TRACKER ACTIVE --
-      const video = videoRef.current;
-      if (!video || video.paused || video.ended) return;
+    // Reset buffer timer since face was found
+    awayTimerStartRef.current = null;
 
-      try {
-        // Detect single face with landmarks using optimized tiny face detector options
-        const detection = await faceapi.detectSingleFace(
-          video,
-          new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
-        ).withFaceLandmarks(true);
+    const positions = detection.landmarks.positions;
 
-        if (!detection) {
-          // NO FACE DETECTED
-          setCurrentEAR(null);
-          setCurrentAsymmetry(null);
-          setFacePositionOffset(null);
-          onDrowsinessChangeRef.current(false);
+    // Render wireframe outline
+    if (canvas && ctx) {
+      const displaySize = { width: video.videoWidth, height: video.videoHeight };
+      faceapi.matchDimensions(canvas, displaySize);
+      ctx.clearRect(0, 0, displaySize.width, displaySize.height);
+      drawFaceMesh(ctx, detection.landmarks);
+    }
 
-          consecutiveDistractionTicksRef.current = 0;
-          setDistractionGraceSeconds(0);
+    // Compute EAR (Eye Openness ratio)
+    const leftEyeEAR = getEAR(positions, 36, 41);
+    const rightEyeEAR = getEAR(positions, 42, 47);
+    const avgEAR = (leftEyeEAR + rightEyeEAR) / 2.0;
+    setCurrentEAR(avgEAR);
 
-          // Buffer AWAY state: Only declare AWAY if no face detected for more than awayThresholdSeconds
-          if (awayTimerStartRef.current === null) {
-            awayTimerStartRef.current = Date.now();
-          } else {
-            const timeWithoutFace = Date.now() - awayTimerStartRef.current;
-            if (timeWithoutFace >= awayThresholdSeconds * 1000) {
-              onStateChangeRef.current(FocusState.AWAY);
-            }
-          }
-          return;
+    // Compute face coordinates and offsets from central screen
+    const jawLeft = positions[0];
+    const jawRight = positions[16];
+    const nosePoint = positions[30];
+
+    // Left vs right cheek depth width
+    const leftDist = Math.abs(nosePoint.x - jawLeft.x);
+    const rightDist = Math.abs(jawRight.x - nosePoint.x);
+
+    // Face distance centering
+    const faceCenterX = (jawLeft.x + jawRight.x) / 2;
+    const videoCenterX = video.videoWidth / 2;
+    const offsetPercent = Math.abs(faceCenterX - videoCenterX) / video.videoWidth;
+    setFacePositionOffset(offsetPercent);
+
+    // Lateral face asymmetry
+    const asymmetry = Math.max(leftDist, rightDist) / Math.max(1, Math.min(leftDist, rightDist));
+    setCurrentAsymmetry(asymmetry);
+
+    // Calculate eye slope (tilt angle)
+    const eyeLeftCenter = positions[36];
+    const eyeRightCenter = positions[45];
+    const eyeSlope = Math.abs(eyeRightCenter.y - eyeLeftCenter.y) / Math.max(1, Math.abs(eyeRightCenter.x - eyeLeftCenter.x));
+
+    // Handle eyes-closed drowsiness alert (threshold = 0.17)
+    const isCurrentlyDrowsy = avgEAR < 0.17;
+    onDrowsinessChangeRef.current(isCurrentlyDrowsy);
+
+    // Physical erratic motion movement tracking counter
+    let liveMovement = false;
+    if (lastNosePositionRef.current) {
+      const dx = Math.abs(nosePoint.x - lastNosePositionRef.current.x);
+      const dy = Math.abs(nosePoint.y - lastNosePositionRef.current.y);
+      const delta = Math.sqrt(dx * dx + dy * dy);
+      const movementDeltaLimit = sensitivityRef.current === 1 ? 55 : sensitivityRef.current === 3 ? 20 : 32;
+      liveMovement = (delta > movementDeltaLimit);
+    }
+    lastNosePositionRef.current = { x: nosePoint.x, y: nosePoint.y };
+
+    // DETECT STATES DEFINITIONS:
+    const isHeadTurned = asymmetry > 1.65;
+    const isOffCenter = offsetPercent > 0.25;
+    const lookAwayActive = isHeadTurned || isOffCenter;
+
+    // Smart phone holding camera posture heuristic (extreme asymmetry OR tilted posture plus jaw distortion)
+    const cameraPhoneActive = isSimulatingPhoneRef.current || (asymmetry > 1.7 && eyeSlope > 0.13) || (asymmetry > 1.95);
+    const movementActive = isSimulatingMovementRef.current || liveMovement;
+
+    // 1. LOOK AWAY COUNTDOWN (Start countdown, trigger warning after 5 continuous seconds looking away)
+    if (lookAwayActive && !cameraPhoneActive) {
+      consecutiveDistractionTicksRef.current += 1;
+      const seconds = consecutiveDistractionTicksRef.current * 0.5;
+      setDistractionGraceSeconds(seconds);
+
+      if (seconds >= 5) {
+        onStateChangeRef.current(FocusState.DISTRACTED);
+        if (!lookAwayTriggeredThisPeriodRef.current) {
+          lookAwayTriggeredThisPeriodRef.current = true;
+          onLookAwayOccurrenceRef.current();
         }
-
-        // Face found! Reset AWAY buffer timer
-        awayTimerStartRef.current = null;
-
-        const landmarks = detection.landmarks;
-        const positions = landmarks.positions;
-
-        // Jaw outline left (index 0) to right (index 16)
-        const jawLeft = positions[0];
-        const jawRight = positions[16];
-        const nosePoint = positions[30]; // nose tip
-
-        const leftDist = Math.abs(nosePoint.x - jawLeft.x);
-        const rightDist = Math.abs(jawRight.x - nosePoint.x);
-        
-        // Average eye aspect ratio (EAR) for drowsiness
-        const leftEyeEAR = getEAR(positions, 36, 41);
-        const rightEyeEAR = getEAR(positions, 42, 47);
-        const avgEAR = (leftEyeEAR + rightEyeEAR) / 2.0;
-
-        setCurrentEAR(avgEAR);
-
-        // Calculate face center offset from camera center
-        const faceCenterX = (jawLeft.x + jawRight.x) / 2;
-        const videoCenterX = video.videoWidth / 2;
-        const offsetPercent = Math.abs(faceCenterX - videoCenterX) / video.videoWidth;
-        setFacePositionOffset(offsetPercent);
-
-        // Asymmetry Ratio to check horizontal face turn
-        const asymmetry = Math.max(leftDist, rightDist) / Math.max(1, Math.min(leftDist, rightDist));
-        setCurrentAsymmetry(asymmetry);
-
-        // Check if drowsy / closed eyes (avgEAR < 0.17 is closed/very drowsy)
-        const isCurrentlyDrowsy = avgEAR < 0.17;
-        onDrowsinessChangeRef.current(isCurrentlyDrowsy);
-
-        // Calculate nose vector tracking frame delta for real erratic motion
-        if (lastNosePositionRef.current) {
-          const dx = Math.abs(nosePoint.x - lastNosePositionRef.current.x);
-          const dy = Math.abs(nosePoint.y - lastNosePositionRef.current.y);
-          const delta = Math.sqrt(dx * dx + dy * dy);
-          
-          // Higher motion threshold for relaxed sensitivity, strict registers movement quickly
-          const movementDeltaLimit = sensValue === 1 ? 55 : sensValue === 3 ? 20 : 32;
-          
-          // Classify frame movement
-          isErraticMovementDetectedRef.current = (delta > movementDeltaLimit);
-        }
-        lastNosePositionRef.current = { x: nosePoint.x, y: nosePoint.y };
-
-        // 1. Handle sideways Look Away detection
-        const isHeadTurned = asymmetry > asymmetryThreshold;
-        const isOffCenter = offsetPercent > offCenterThreshold;
-
-        if (isHeadTurned || isOffCenter) {
-          consecutiveDistractionTicksRef.current += 1;
-          const currentDistractedSec = Math.floor(consecutiveDistractionTicksRef.current * 0.5);
-          setDistractionGraceSeconds(currentDistractedSec);
-
-          if (currentDistractedSec >= maxGraceSeconds) {
-            onStateChangeRef.current(FocusState.DISTRACTED);
-            if (!lookAwayTriggeredThisPeriodRef.current) {
-              lookAwayTriggeredThisPeriodRef.current = true;
-              onLookAwayOccurrenceRef.current();
-            }
-          } else {
-            onStateChangeRef.current(FocusState.FOCUSED);
-          }
-        } else {
-          // Looking back straight: reset grace counter silently
-          consecutiveDistractionTicksRef.current = 0;
-          setDistractionGraceSeconds(0);
-          lookAwayTriggeredThisPeriodRef.current = false;
-          onStateChangeRef.current(FocusState.FOCUSED);
-        }
-
-        // 2. Handle Phone active detection via webcam simulated toggle
-        const phoneActive = isSimulatingPhoneRef.current;
-        if (phoneActive) {
-          consecutivePhoneTicksRef.current += 1;
-          const currentPhoneSec = Math.floor(consecutivePhoneTicksRef.current * 0.5);
-          setPhoneGraceSeconds(currentPhoneSec);
-
-          if (currentPhoneSec >= 5) {
-            if (!phoneTriggeredThisPeriodRef.current) {
-              phoneTriggeredThisPeriodRef.current = true;
-              onPhoneOccurrenceRef.current();
-            }
-          }
-        } else {
-          consecutivePhoneTicksRef.current = 0;
-          setPhoneGraceSeconds(0);
-          phoneTriggeredThisPeriodRef.current = false;
-        }
-
-        // 3. Handle Erratic movement tracking (combines physical delta + button mock)
-        const movementActive = isSimulatingMovementRef.current || isErraticMovementDetectedRef.current;
-        setLiveErraticMotionDetected(movementActive);
-        if (movementActive) {
-          consecutiveMovementTicksRef.current += 1;
-          const currentMovementSec = Math.floor(consecutiveMovementTicksRef.current * 0.5);
-          setMovementGraceSeconds(currentMovementSec);
-
-          if (currentMovementSec >= 5) {
-            if (!movementTriggeredThisPeriodRef.current) {
-              movementTriggeredThisPeriodRef.current = true;
-              onMovementOccurrenceRef.current();
-            }
-          }
-        } else {
-          consecutiveMovementTicksRef.current = 0;
-          setMovementGraceSeconds(0);
-          movementTriggeredThisPeriodRef.current = false;
-        }
-
-      } catch (err) {
-        console.warn('Error during frame detection interval:', err);
+      } else {
+        onStateChangeRef.current(FocusState.FOCUSED);
       }
-    }, 500);
+    } else {
+      consecutiveDistractionTicksRef.current = 0;
+      setDistractionGraceSeconds(0);
+      lookAwayTriggeredThisPeriodRef.current = false;
+    }
+
+    // 2. PHONE HOLDING COUNTDOWN (5 continuous seconds)
+    if (cameraPhoneActive) {
+      consecutivePhoneTicksRef.current += 1;
+      const seconds = consecutivePhoneTicksRef.current * 0.5;
+      setPhoneGraceSeconds(seconds);
+
+      if (seconds >= 5) {
+        if (!phoneTriggeredThisPeriodRef.current) {
+          phoneTriggeredThisPeriodRef.current = true;
+          onPhoneOccurrenceRef.current();
+        }
+      }
+    } else {
+      consecutivePhoneTicksRef.current = 0;
+      setPhoneGraceSeconds(0);
+      phoneTriggeredThisPeriodRef.current = false;
+    }
+
+    // 3. MOTION COUNTDOWN (5 continuous seconds)
+    setLiveErraticMotionDetected(movementActive);
+    if (movementActive) {
+      consecutiveMovementTicksRef.current += 1;
+      const seconds = consecutiveMovementTicksRef.current * 0.5;
+      setMovementGraceSeconds(seconds);
+
+      if (seconds >= 5) {
+        if (!movementTriggeredThisPeriodRef.current) {
+          movementTriggeredThisPeriodRef.current = true;
+          onMovementOccurrenceRef.current();
+        }
+      }
+    } else {
+      consecutiveMovementTicksRef.current = 0;
+      setMovementGraceSeconds(0);
+      movementTriggeredThisPeriodRef.current = false;
+    }
+
+    // Resolve unified overall state
+    const overallDistracted = (consecutiveDistractionTicksRef.current * 0.5 >= 5) || 
+                              (consecutivePhoneTicksRef.current * 0.5 >= 5) || 
+                              (consecutiveMovementTicksRef.current * 0.5 >= 5);
+                              
+    if (overallDistracted) {
+      onStateChangeRef.current(FocusState.DISTRACTED);
+    } else {
+      onStateChangeRef.current(FocusState.FOCUSED);
+    }
   }
 
   // Calculate Eye Aspect Ratio (EAR)
   function getEAR(positions: any[], startIdx: number, endIdx: number): number {
-    // p1 = startIdx, p2 = startIdx+1, p3 = startIdx+2, p4 = startIdx+3, p5 = startIdx+4, p6 = startIdx+5
     const p1 = positions[startIdx];
     const p2 = positions[startIdx + 1];
     const p3 = positions[startIdx + 2];
@@ -578,103 +596,59 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
     return (distY1 + distY2) / (2.0 * Math.max(0.1, distX));
   }
 
-  // Handle Simulation controls
-  useEffect(() => {
-    if (isSimulating) {
-      // Clear real camera tracking intervals
-      if (detectionIntervalRef.current) {
-        clearInterval(detectionIntervalRef.current);
-        detectionIntervalRef.current = null;
-      }
-
-      onStateChange(simulatedSetting);
-      onDrowsinessChange(simulatedDrowsy);
-
-      // Generate mock stats
-      if (simulatedSetting === FocusState.FOCUSED) {
-        setCurrentEAR(simulatedDrowsy ? 0.14 : 0.28);
-        setCurrentAsymmetry(1.1);
-        setFacePositionOffset(0.04);
-      } else if (simulatedSetting === FocusState.DISTRACTED) {
-        setCurrentEAR(simulatedDrowsy ? 0.12 : 0.26);
-        setCurrentAsymmetry(2.2);
-        setFacePositionOffset(0.08);
-      } else {
-        setCurrentEAR(null);
-        setCurrentAsymmetry(null);
-        setFacePositionOffset(null);
-      }
-    }
-  }, [isSimulating, simulatedSetting, simulatedDrowsy]);
-
   function toggleSimulationMode() {
     if (isSimulating) {
       setIsSimulating(false);
-      if (cameraAllowed !== false && modelsLoaded) {
-        startCamera();
-      } else {
-        startCamera();
-      }
+      startCamera();
     } else {
       setIsSimulating(true);
-      stopCameraAndTracking();
+      stopCamera();
     }
   }
 
-  // Style accents based on currentState
-  const ringColorMap = {
+  // Style mappings depending on active FocusState
+  const borderRingClasses = {
     [FocusState.FOCUSED]: 'border-[#34D399] shadow-[#34D399]/20',
     [FocusState.DISTRACTED]: 'border-[#FBBF24] shadow-[#FBBF24]/20',
     [FocusState.AWAY]: 'border-[#F87171] shadow-[#F87171]/20',
   };
 
-  const ringBgMap = {
+  const badgeBgClasses = {
     [FocusState.FOCUSED]: 'bg-[#34D399]/10 text-[#34D399]',
     [FocusState.DISTRACTED]: 'bg-[#FBBF24]/10 text-[#FBBF24]',
     [FocusState.AWAY]: 'bg-[#F87171]/10 text-[#F87171]',
   };
 
-  const labelMap = {
+  const badgeLabelText = {
     [FocusState.FOCUSED]: 'Focused',
     [FocusState.DISTRACTED]: 'Distracted',
     [FocusState.AWAY]: 'Away',
   };
 
-  // Resolve current active thresholds based on sensitivity
-  let maxGraceSeconds = 5;
-  let asymmetryThreshold = 1.65;
-  if (sensitivity === 1) { // Relaxed
-    maxGraceSeconds = 8;
-    asymmetryThreshold = 2.0;
-  } else if (sensitivity === 3) { // Strict
-    maxGraceSeconds = 2;
-    asymmetryThreshold = 1.35;
-  }
-
   return (
     <div id="camera-tracker-panel" className="bg-[#15151D] border border-[#2A2A35] rounded-xl p-5 flex flex-col space-y-4 shadow-xl transition-all duration-300">
       
-      {/* Title & Stats */}
+      {/* Title block */}
       <div className="flex justify-between items-center pb-2 border-b border-[#2A2A35]">
         <div className="flex items-center space-x-2">
           <Camera className="w-4 h-4 text-[#8B5CF6]" />
           <h2 className="font-sans font-semibold text-sm text-[#F5F5F7]">Live Guard Feed</h2>
         </div>
 
-        {/* Focus State Badge */}
-        <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center space-x-1.5 transition-all duration-300 ${ringBgMap[currentState]}`}>
+        {/* Live Active Status Badge */}
+        <div id="live-guard-status-badge" className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center space-x-1.5 transition-all duration-300 ${badgeBgClasses[currentState]}`}>
           <span className={`w-1.5 h-1.5 rounded-full inline-block ${
             currentState === FocusState.FOCUSED ? 'bg-[#34D399] animate-pulse' :
             currentState === FocusState.DISTRACTED ? 'bg-[#FBBF24]' : 'bg-[#F87171]'
           }`} />
-          <span>{labelMap[currentState]}</span>
+          <span>{badgeLabelText[currentState]}</span>
         </div>
       </div>
 
-      {/* Webcam Frame */}
+      {/* Frame / Simulator Box */}
       <div className="relative">
         
-        {/* Loading Spinner */}
+        {/* Loading overlay for libraries */}
         {loading && (
           <div className="absolute inset-0 bg-[#0A0A0F]/90 rounded-2xl flex flex-col items-center justify-center space-y-3 z-30 p-6 text-center">
             <RefreshCw className="w-8 h-8 text-[#6366F1] animate-spin" />
@@ -683,10 +657,10 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           </div>
         )}
 
-        {/* Video feed inside standard card */}
+        {/* Outer Frame Wrapper */}
         <div 
           id="webcam-box-glow" 
-          className={`relative aspect-video rounded-xl overflow-hidden border bg-black transition-all duration-500 shadow-lg ${ringColorMap[currentState]} ${
+          className={`relative aspect-video rounded-xl overflow-hidden border bg-black transition-all duration-500 shadow-lg ${borderRingClasses[currentState]} ${
             currentState === FocusState.FOCUSED ? 'animate-[pulse_2.5s_infinite_ease-in-out]' : ''
           }`}
         >
@@ -698,7 +672,7 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
                 <p className="font-sans text-[10px] text-[#9CA3AF] max-w-xs">Testing behavior without camera or when neural models are loading</p>
               </div>
               
-              {/* Simulator interactive dials */}
+              {/* Simulator interactive control dials */}
               <div className="bg-[#1C1C24] p-3 rounded-lg border border-[#2A2A35] max-w-[240px] w-full text-left space-y-2.5">
                 <p className="text-[9px] uppercase tracking-wider font-bold text-[#8B5CF6]">Control Simulated State</p>
                 
@@ -743,7 +717,7 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
             </>
           )}
 
-          {/* Distraction Grace Warning HUD overlay */}
+          {/* Distraction Grace Warning HUD overlays */}
           {currentState === FocusState.FOCUSED && (distractionGraceSeconds > 0 || phoneGraceSeconds > 0 || movementGraceSeconds > 0) && (
             <div className="absolute top-3 left-3 right-3 bg-amber-500/95 backdrop-blur-md text-slate-950 px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg border border-amber-400/30 z-10 animate-[bounce_1.5s_infinite]">
               <div className="flex items-center space-x-2">
@@ -758,17 +732,17 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
               <div className="flex flex-col items-end leading-none">
                 <span className="font-mono font-black text-sm">
                   {distractionGraceSeconds > 0 
-                    ? `${distractionGraceSeconds}s / ${maxGraceSeconds}s` 
+                    ? `${(5 - distractionGraceSeconds).toFixed(1)}s` 
                     : phoneGraceSeconds > 0 
-                      ? `${phoneGraceSeconds}s / 5s` 
-                      : `${movementGraceSeconds}s / 5s`}
+                      ? `${(5 - phoneGraceSeconds).toFixed(1)}s` 
+                      : `${(5 - movementGraceSeconds).toFixed(1)}s`}
                 </span>
-                <span className="text-[8px] uppercase font-bold tracking-widest opacity-80 mt-0.5">Grace Period</span>
+                <span className="text-[8px] uppercase font-bold tracking-widest opacity-80 mt-0.5">Time Remaining</span>
               </div>
             </div>
           )}
 
-          {/* Fallback & Camera Permission Denied Overlay */}
+          {/* Camera Permission Denied Overlay */}
           {!loading && cameraAllowed === false && !isSimulating && (
             <div className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center space-y-3 z-20 p-6 text-center">
               <AlertCircle className="w-8 h-8 text-[#FBBF24]" />
@@ -786,23 +760,23 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           )}
         </div>
 
-        {/* Live processing privacy disclaimer */}
+        {/* Local Security banner */}
         <div className="flex items-center space-x-1.5 text-emerald-400/80 mt-2 bg-[#34D399]/5 border border-[#34D399]/15 rounded-md px-3 py-1.5 justify-center">
           <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-          <span className="font-sans text-[10px] text-[#F5F5F7]">
+          <span className="font-sans text-[10px] text-[#F5F5F7] text-center">
             All processing happens locally in your browser. No video or images are ever uploaded or stored.
           </span>
         </div>
       </div>
 
-      {/* Realtime Computer Vision telemetry telemetry data (clean & helpful) */}
+      {/* Realtime Telemetry coordinates output block */}
       <div className="grid grid-cols-2 gap-2 mt-2 font-mono text-[9px] text-[#9CA3AF]">
         <div className="bg-[#1C1C24] p-2 rounded border border-[#2A2A35]/60">
           <span className="block text-gray-400 capitalize">Eye openness (EAR)</span>
           <span className="font-bold text-[#F5F5F7] text-xs">
             {currentEAR !== null ? (
               <span className={currentEAR < 0.17 ? 'text-[#FBBF24]' : 'text-[#34D399]'}>
-                {currentEAR.toFixed(2)} {currentEAR < 0.17 ? '(Closed / Drowsy)' : '(Normal)'}
+                {currentEAR.toFixed(2)} {currentEAR < 0.17 ? '(Drowsiness Alert)' : '(Normal)'}
               </span>
             ) : (
               '-- (No face)'
@@ -810,11 +784,11 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           </span>
         </div>
         <div className="bg-[#1C1C24] p-2 rounded border border-[#2A2A35]/60">
-          <span className="block text-gray-400 capitalize">Head asymmetry index</span>
+          <span className="block text-gray-400 capitalize">Pose alignment slope</span>
           <span className="font-bold text-[#F5F5F7] text-xs">
             {currentAsymmetry !== null ? (
-              <span className={currentAsymmetry > asymmetryThreshold ? 'text-[#FBBF24]' : 'text-[#34D399]'}>
-                {unifyAsymmetry(currentAsymmetry).toFixed(1)}° {currentAsymmetry > asymmetryThreshold ? '(Looking away)' : '(Looking straight)'}
+              <span className={currentAsymmetry > 1.65 ? 'text-[#FBBF24]' : 'text-[#34D399]'}>
+                {Math.min(90, (currentAsymmetry - 1) * 35).toFixed(1)}° {currentAsymmetry > 1.65 ? '(Atypical turn)' : '(Aligned)'}
               </span>
             ) : (
               '-- (No face)'
@@ -823,11 +797,11 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         </div>
       </div>
 
-      {/* Manual Distraction Simulators Grid (Always accessible for testing the chances warning design) */}
+      {/* Manual Distraction Injector (Active for both webcam and simulation testing) */}
       <div className="bg-[#111116] border border-[#2A2A35]/40 p-3 rounded-lg flex flex-col space-y-2 select-none">
         <p className="text-[9px] uppercase tracking-wider font-extrabold text-[#9CA3AF] flex items-center space-x-1">
           <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500/20" />
-          <span>Manual Distraction Injector (Webcam & Simulation compatible)</span>
+          <span>Manual Distraction Injector (Demonstration & Sandbox tools)</span>
         </p>
         <div className="grid grid-cols-2 gap-2.5">
           <button
@@ -855,26 +829,26 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           </button>
         </div>
 
-        {/* Realtime progress bars to show timer counting up to 5s */}
+        {/* Realtime progress bar/labels showing the ticking count */}
         {(isSimulatingPhone || isSimulatingMovement || liveErraticMotionDetected) && (
           <div className="text-[9px] text-[#9CA3AF] font-mono leading-relaxed pt-1 border-t border-[#2A2A35]/30 space-y-1">
             {isSimulatingPhone && (
               <div className="flex justify-between items-center">
-                <span>Phone holding grace:</span>
-                <span className="font-bold text-[#F5F5F7] bg-black/40 px-1 rounded">{phoneGraceSeconds}s / 5s</span>
+                <span>Phone holding grace remaining:</span>
+                <span className="font-bold text-amber-500 bg-black/40 px-1 rounded">{(5 - phoneGraceSeconds).toFixed(1)}s</span>
               </div>
             )}
             {(isSimulatingMovement || liveErraticMotionDetected) && (
               <div className="flex justify-between items-center">
-                <span>Erratic motion grace:</span>
-                <span className="font-bold text-[#F5F5F7] bg-black/40 px-1 rounded">{movementGraceSeconds}s / 5s</span>
+                <span>Erratic motion grace remaining:</span>
+                <span className="font-bold text-blue-400 bg-black/40 px-1 rounded">{(5 - movementGraceSeconds).toFixed(1)}s</span>
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* Simulator / Real Toggle Buttons */}
+      {/* Simulator / Real Toggle Buttons footer */}
       <div className="flex justify-end pt-1">
         <button
           onClick={toggleSimulationMode}
@@ -888,9 +862,3 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
     </div>
   );
 };
-
-// Helper to translate abstract asymmetry calculation to readable coordinate angles
-function unifyAsymmetry(val: number): number {
-  if (val <= 1.0) return 0;
-  return Math.min(90, (val - 1.0) * 35);
-}

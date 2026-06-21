@@ -29,4 +29,5 @@ export interface Settings {
   breakDuration: number; // in minutes
   soundEnabled: boolean;
   sensitivity: number; // 1 to 10
+  theme?: 'dark' | 'light';
 }

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Settings, Sliders, Volume2, VolumeX, Flame, Zap } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Settings, Sliders, Volume2, VolumeX, Flame, Zap, Sun, Moon } from 'lucide-react';
 import { Settings as SettingsType } from '../types';
 
 interface SettingsModalProps {
@@ -19,6 +19,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [breakDur, setBreakDur] = useState(settings.breakDuration);
   const [soundOn, setSoundOn] = useState(settings.soundEnabled);
   const [sens, setSens] = useState(settings.sensitivity);
+  const [theme, setTheme] = useState<'dark' | 'light'>(settings.theme || 'dark');
+
+  // Synchronize internal state with external settings when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setFocusDur(settings.focusDuration);
+      setBreakDur(settings.breakDuration);
+      setSoundOn(settings.soundEnabled);
+      setSens(settings.sensitivity);
+      setTheme(settings.theme || 'dark');
+    }
+  }, [isOpen, settings]);
 
   if (!isOpen) return null;
 
@@ -29,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       breakDuration: Math.max(1, breakDur),
       soundEnabled: soundOn,
       sensitivity: sens,
+      theme: theme,
     });
     onClose();
   };
@@ -118,6 +131,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </>
               )}
             </button>
+          </div>
+
+          {/* Theme Selector */}
+          <div className="bg-[#0A0A0F] border border-[#2A2A35]/60 p-4 rounded-lg flex items-center justify-between">
+            <div className="space-y-0.5">
+              <span className="block font-sans text-xs font-semibold text-[#F5F5F7]">Visual Theme</span>
+              <span className="block font-sans text-[10px] text-[#9CA3AF]">Optimized for day or night studying</span>
+            </div>
+            
+            <div className="flex bg-[#111116] p-1 rounded-lg border border-[#2A2A35]/40 shrink-0">
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`cursor-pointer px-3 py-1.5 rounded-md flex items-center space-x-1.5 text-[10px] font-extrabold uppercase tracking-widest transition-all ${
+                  theme === 'dark'
+                    ? 'bg-[#8B5CF6] text-white shadow-sm'
+                    : 'text-[#9CA3AF] hover:text-[#F5F5F7]'
+                }`}
+              >
+                <Moon className="w-3.5 h-3.5" />
+                <span>Dark</span>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setTheme('light')}
+                className={`cursor-pointer px-3 py-1.5 rounded-md flex items-center space-x-1.5 text-[10px] font-extrabold uppercase tracking-widest transition-all ${
+                  theme === 'light'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-[#9CA3AF] hover:text-[#F5F5F7]'
+                }`}
+              >
+                <Sun className="w-3.5 h-3.5" />
+                <span>Light</span>
+              </button>
+            </div>
           </div>
 
           {/* Distraction sensitivity level selector */}

@@ -57,3 +57,128 @@ body {
 .animate-scale-up {
   animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* ==========================================================================
+   HIGH-CONTRAST LIGHT MODE STYLE OVERRIDES (FOR DAYTIME STUDY SESSIONS)
+   ========================================================================= */
+
+.light-theme {
+  background-color: #F3F4F6 !important;
+  color: #111827 !important;
+}
+
+/* Custom Scrollbars for Light Aesthetics */
+.light-theme ::-webkit-scrollbar-track {
+  background: #F3F4F6;
+}
+.light-theme ::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+}
+.light-theme ::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Panels and Cards background mapping overrides */
+.light-theme .bg-\[\#0A0A0F\] {
+  background-color: #F3F4F6 !important;
+}
+
+.light-theme .bg-\[\#15151D\] {
+  background-color: #FFFFFF !important;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 2px 8px -1px rgba(0, 0, 0, 0.04) !important;
+}
+
+.light-theme .bg-\[\#111116\] {
+  background-color: #ECEFF3 !important;
+}
+
+.light-theme .bg-\[\#1C1C24\] {
+  background-color: #F8FAFC !important;
+}
+
+/* Borders mapping overrides */
+.light-theme .border-\[\#2A2A35\] {
+  border-color: #D1D5DB !important;
+}
+
+.light-theme .border-\[\#2A2A35\]\/60 {
+  border-color: rgba(209, 213, 219, 0.6) !important;
+}
+
+.light-theme .border-\[\#2A2A35\]\/45 {
+  border-color: rgba(209, 213, 219, 0.45) !important;
+}
+
+.light-theme .border-\[\#2A2A35\]\/40 {
+  border-color: rgba(209, 213, 219, 0.4) !important;
+}
+
+.light-theme .stroke-\[\#2A2A35\] {
+  stroke: #D1D5DB !important;
+}
+
+.light-theme [stroke="#2A2A35"] {
+  stroke: #D1D5DB !important;
+}
+
+/* Text mapping overrides */
+.light-theme .text-\[\#F5F5F7\] {
+  color: #0F172A !important;
+}
+
+.light-theme .text-\[\#9CA3AF\] {
+  color: #4B5563 !important;
+}
+
+.light-theme .text-slate-400 {
+  color: #4B5563 !important;
+}
+
+.light-theme .text-gray-400 {
+  color: #374151 !important;
+}
+
+.light-theme .text-gray-500 {
+  color: #4B5563 !important;
+}
+
+.light-theme .hover\:text-white:hover {
+  color: #111827 !important;
+}
+
+/* Button & Active Element overrides */
+.light-theme .bg-\[\#2A2A35\] {
+  background-color: #E2E8F0 !important;
+  color: #0F172A !important;
+}
+
+.light-theme .hover\:bg-\[\#2A2A35\]\/50:hover {
+  background-color: rgba(209, 213, 219, 0.7) !important;
+}
+
+.light-theme .hover\:bg-\[\#2A2A35\]:hover {
+  background-color: #CBD5E1 !important;
+}
+
+.light-theme .hover\:bg-\[\#1C1C24\]\/30:hover {
+  background-color: rgba(209, 213, 219, 0.3) !important;
+}
+
+.light-theme .hover\:bg-\[\#3E3E4B\]:hover {
+  background-color: #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+.light-theme .hover\:text-\[\#F5F5F7\]:hover {
+  color: #0F172A !important;
+}
+
+/* Force light text elements inside tooltips/cards to be dark */
+.light-theme .bg-\[\#15151D\] .text-white {
+  color: #111115 !important;
+}
+
+/* Table rows styling */
+.light-theme tr.bg-\[\#0A0A0F\] {
+  background-color: #ECEFF3 !important;
+}
