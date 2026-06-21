@@ -483,10 +483,12 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
     awayTimerStartRef.current = null;
 
     // REAL phone detection: run object detection on the live video frame to see an actual phone
+    let lastPredictions: any[] = [];
     if (cocoModelRef.current && !isSimulatingPhoneRef.current) {
       try {
         const predictions = await cocoModelRef.current.detect(video);
-        const phoneSeen = predictions.some((p: any) => p.class === 'cell phone' && p.score > 0.5);
+        lastPredictions = predictions;
+        const phoneSeen = predictions.some((p: any) => p.class === 'cell phone' && p.score > 0.4);
         liveCameraPhoneDetectedRef.current = phoneSeen;
       } catch (objErr) {
         // Keep last known value on transient detection errors
@@ -495,12 +497,31 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
     const positions = detection.landmarks.positions;
 
-    // Render wireframe outline
+    // Render wireframe outline + bounding boxes around detected objects (visual proof of detection)
     if (canvas && ctx) {
       const displaySize = { width: video.videoWidth, height: video.videoHeight };
       faceapi.matchDimensions(canvas, displaySize);
       ctx.clearRect(0, 0, displaySize.width, displaySize.height);
       drawFaceMesh(ctx, detection.landmarks);
+
+      lastPredictions.forEach((p: any) => {
+        const [x, y, width, height] = p.bbox;
+        const isPhone = p.class === 'cell phone';
+        ctx.strokeStyle = isPhone ? '#F87171' : 'rgba(99,102,241,0.6)';
+        ctx.lineWidth = isPhone ? 3 : 1.5;
+        ctx.shadowColor = isPhone ? '#F87171' : 'transparent';
+        ctx.shadowBlur = isPhone ? 8 : 0;
+        ctx.strokeRect(x, y, width, height);
+
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillStyle = isPhone ? '#F87171' : '#A5B4FC';
+        const label = `${p.class} ${(p.score * 100).toFixed(0)}%`;
+        const textWidth = ctx.measureText(label).width;
+        ctx.fillRect(x, y - 18, textWidth + 8, 18);
+        ctx.fillStyle = '#0A0A0F';
+        ctx.fillText(label, x + 4, y - 4);
+      });
+      ctx.shadowBlur = 0;
     }
 
     // Compute EAR (Eye Openness ratio)
