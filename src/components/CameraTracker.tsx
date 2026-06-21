@@ -57,15 +57,42 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         
         // Load the main script if it doesn't exist
         if (!(window as any).faceapi) {
-          const script = document.createElement('script');
-          script.src = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.3.0/dist/face-api.js';
-          script.async = true;
+          const cdnUrls = [
+            'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js',
+            'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.3.0/dist/face-api.js',
+            'https://unpkg.com/@vladmandic/face-api/dist/face-api.js'
+          ];
           
-          await new Promise<void>((resolve, reject) => {
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('Failed to download computer vision engine.'));
-            document.head.appendChild(script);
-          });
+          let scriptLoaded = false;
+          let lastScriptError: any = null;
+          
+          for (const url of cdnUrls) {
+            if (!active) return;
+            try {
+              setLoadingProgress(`Loading core face-processing library...`);
+              const script = document.createElement('script');
+              script.src = url;
+              script.async = true;
+              
+              await new Promise<void>((resolve, reject) => {
+                script.onload = () => resolve();
+                script.onerror = () => reject(new Error(`Failed to load ${url}`));
+                document.head.appendChild(script);
+              });
+              
+              if ((window as any).faceapi) {
+                scriptLoaded = true;
+                break;
+              }
+            } catch (err) {
+              lastScriptError = err;
+              console.warn(`CDN URL failed: ${url}. Attempting next backup CDN...`);
+            }
+          }
+          
+          if (!scriptLoaded) {
+            throw lastScriptError || new Error('Failed to download computer vision engine from any available CDN source.');
+          }
         }
 
         if (!active) return;
@@ -75,16 +102,36 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           throw new Error('Face-API could not be loaded into memory.');
         }
 
-        // Configure backend if necessary (default WebGL is automatically chosen)
+        // Load tinyFaceDetector and faceLandmark68Net
         setLoadingProgress('Loading neural network models...');
         
-        // Load tinyFaceDetector and faceLandmark68Net
-        const modelUri = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+        const modelUris = [
+          'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/',
+          'https://unpkg.com/@vladmandic/face-api/model/'
+        ];
         
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(modelUri),
-          faceapi.nets.faceLandmark68Net.loadFromUri(modelUri)
-        ]);
+        let modelsLoadedSuccessfully = false;
+        let lastModelError: any = null;
+        
+        for (const uri of modelUris) {
+          if (!active) return;
+          try {
+            setLoadingProgress(`Downloading face tracking neural models...`);
+            await Promise.all([
+              faceapi.nets.tinyFaceDetector.loadFromUri(uri),
+              faceapi.nets.faceLandmark68Net.loadFromUri(uri)
+            ]);
+            modelsLoadedSuccessfully = true;
+            break;
+          } catch (err) {
+            lastModelError = err;
+            console.warn(`Model loading failed from: ${uri}. Attempting next backup source...`);
+          }
+        }
+        
+        if (!modelsLoadedSuccessfully) {
+          throw lastModelError || new Error('Neural network models failed to download from any available CDN source.');
+        }
 
         if (!active) return;
         setModelsLoaded(true);
