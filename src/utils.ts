@@ -37,6 +37,41 @@ export function playAlertBeep() {
 }
 
 /**
+ * Plays a soft, low-frequency warning chime for grace chances
+ */
+export function playSoftBeep() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    if (!audioCtx) {
+      audioCtx = new AudioContextClass();
+    }
+
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(330, audioCtx.currentTime); // 330Hz cozy chime
+    
+    gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.25);
+  } catch (err) {
+    console.warn('Failed to play soft beep chime:', err);
+  }
+}
+
+/**
  * Formats a duration in seconds into MM:SS format
  */
 export function formatMMSS(seconds: number): string {

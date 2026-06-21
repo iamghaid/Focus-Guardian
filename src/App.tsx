@@ -6,7 +6,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { SessionSummary } from './components/SessionSummary';
 import { HistoryTab } from './components/HistoryTab';
 import { FocusState, SessionHistory, Settings, TimelineEvent } from './types';
-import { playAlertBeep } from './utils';
+import { playAlertBeep, playSoftBeep } from './utils';
 import { X, AlertCircle, Sparkles, CheckCircle2, Eye, Flame, ShieldAlert, Award } from 'lucide-react';
 
 interface Toast {
@@ -60,6 +60,15 @@ export default function App() {
   const [elapsedSecondsCount, setElapsedSecondsCount] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
 
+  // Granular distraction session trackers
+  const [lookAwayCount, setLookAwayCount] = useState(0);
+  const [phoneCount, setPhoneCount] = useState(0);
+  const [movementCount, setMovementCount] = useState(0);
+
+  // Chances system states
+  const [phoneChancesUsed, setPhoneChancesUsed] = useState(0);
+  const [movementChancesUsed, setMovementChancesUsed] = useState(0);
+
   // Streak counters for continuous states (seconds)
   const distractedContinuousSeconds = useRef<number>(0);
   const awayContinuousSeconds = useRef<number>(0);
@@ -86,6 +95,84 @@ export default function App() {
   useEffect(() => {
     sessionModeRef.current = sessionMode;
   }, [sessionMode]);
+
+  // Distraction trigger callbacks
+  const handlePhoneOccurrence = () => {
+    if (!isTimerRunning) return;
+    
+    // Increment total detected counts
+    setPhoneCount(p => p + 1);
+
+    // Dynamic chances threshold based on sensitivity slider
+    // Relaxed (1): 3 free chances before full alarm
+    // Balanced (2): 2 free chances
+    // Strict (3): 1 free chance
+    const maxFreeChances = settings.sensitivity === 1 ? 3 : settings.sensitivity === 3 ? 1 : 2;
+
+    setPhoneChancesUsed(prev => {
+      const nextChances = prev + 1;
+      
+      if (nextChances <= maxFreeChances) {
+        if (nextChances === 1) {
+          // 1st chance: gentle popup with no sound
+          addToast("Hey, I noticed your phone — let's stay focused 🙂", "info");
+        } else {
+          // Subsequent chances: firmer popup with soft chime sound
+          if (soundEnabledRef.current) {
+            playSoftBeep();
+          }
+          addToast(`Phone again? Try to put it aside for this session. (Chance ${nextChances}/${maxFreeChances})`, "info");
+        }
+      } else {
+        // Exceeded free chances: full distraction alert
+        if (soundEnabledRef.current) {
+          playAlertBeep();
+        }
+        addToast("Phone detected! Strict focus alert active 📱🚨", "distracted");
+        setDistractedAlertCount(c => c + 1);
+      }
+      return nextChances;
+    });
+  };
+
+  const handleMovementOccurrence = () => {
+    if (!isTimerRunning) return;
+
+    // Increment total movement detected counts
+    setMovementCount(m => m + 1);
+
+    const maxFreeChances = settings.sensitivity === 1 ? 3 : settings.sensitivity === 3 ? 1 : 2;
+
+    setMovementChancesUsed(prev => {
+      const nextChances = prev + 1;
+      
+      if (nextChances <= maxFreeChances) {
+        if (nextChances === 1) {
+          // 1st chance: gentle popup with no sound
+          addToast("Whoa, settle down — let's get back to studying! 🏃", "info");
+        } else {
+          // Subsequent chances: firmer popup with soft chime sound
+          if (soundEnabledRef.current) {
+            playSoftBeep();
+          }
+          addToast(`Unusual movement? Let's stay settled and locked-in. (Chance ${nextChances}/${maxFreeChances})`, "info");
+        }
+      } else {
+        // Exceeded free chances: full distraction alert
+        if (soundEnabledRef.current) {
+          playAlertBeep();
+        }
+        addToast("Erratic movement detected! Strict focus alert active 🚨🏃", "distracted");
+        setDistractedAlertCount(c => c + 1);
+      }
+      return nextChances;
+    });
+  };
+
+  const handleLookAwayOccurrence = () => {
+    if (!isTimerRunning) return;
+    setLookAwayCount(l => l + 1);
+  };
 
   // Toast notifications manager
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -243,7 +330,10 @@ export default function App() {
         focusTime: focusedSeconds,
         distractedTime: distractedSeconds,
         awayTime: awaySeconds,
-        timeline: sessionTimeline.length > 0 ? sessionTimeline : [{ timeOffset: elapsedSecondsCount, state: focusState }]
+        timeline: sessionTimeline.length > 0 ? sessionTimeline : [{ timeOffset: elapsedSecondsCount, state: focusState }],
+        lookAwayCount: lookAwayCount,
+        phoneCount: phoneCount,
+        movementCount: movementCount
       };
 
       const updatedHistory = [...history, completedSession];
@@ -286,6 +376,13 @@ export default function App() {
     awayContinuousSeconds.current = 0;
     drowsyContinuousSeconds.current = 0;
 
+    // Reset diagnostics
+    setLookAwayCount(0);
+    setPhoneCount(0);
+    setMovementCount(0);
+    setPhoneChancesUsed(0);
+    setMovementChancesUsed(0);
+
     addToast('Session status wiped.', 'info');
   };
 
@@ -322,6 +419,13 @@ export default function App() {
     distractedContinuousSeconds.current = 0;
     awayContinuousSeconds.current = 0;
     drowsyContinuousSeconds.current = 0;
+
+    // Reset diagnostics
+    setLookAwayCount(0);
+    setPhoneCount(0);
+    setMovementCount(0);
+    setPhoneChancesUsed(0);
+    setMovementChancesUsed(0);
   };
 
   const handleClearHistory = () => {
@@ -395,6 +499,9 @@ export default function App() {
                 distractedAlertCount={distractedAlertCount}
                 timeline={sessionTimeline}
                 onRestart={handleRestartNewSession}
+                lookAwayCount={lookAwayCount}
+                phoneCount={phoneCount}
+                movementCount={movementCount}
               />
             </div>
           ) : (
@@ -407,6 +514,9 @@ export default function App() {
                   onStateChange={(state) => setFocusState(state)}
                   onDrowsinessChange={(drowsy) => setIsDrowsy(drowsy)}
                   sensitivity={settings.sensitivity}
+                  onPhoneOccurrence={handlePhoneOccurrence}
+                  onMovementOccurrence={handleMovementOccurrence}
+                  onLookAwayOccurrence={handleLookAwayOccurrence}
                 />
               </div>
 

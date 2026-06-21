@@ -2,7 +2,7 @@ import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { FocusState, TimelineEvent } from '../types';
 import { formatMMSS } from '../utils';
-import { Award, Zap, AlertTriangle, ShieldCheck, Play } from 'lucide-react';
+import { Award, Zap, AlertTriangle, ShieldCheck, Play, ShieldAlert, Smartphone, Move } from 'lucide-react';
 
 interface SessionSummaryProps {
   duration: number; // in minutes
@@ -13,6 +13,9 @@ interface SessionSummaryProps {
   distractedAlertCount: number;
   timeline: TimelineEvent[];
   onRestart: () => void;
+  lookAwayCount?: number;
+  phoneCount?: number;
+  movementCount?: number;
 }
 
 export const SessionSummary: React.FC<SessionSummaryProps> = ({
@@ -24,6 +27,9 @@ export const SessionSummary: React.FC<SessionSummaryProps> = ({
   distractedAlertCount,
   timeline,
   onRestart,
+  lookAwayCount = 0,
+  phoneCount = 0,
+  movementCount = 0,
 }) => {
   // Motivational message
   let motivationTitle = '';
@@ -262,6 +268,49 @@ export const SessionSummary: React.FC<SessionSummaryProps> = ({
         ) : (
           <div className="text-center py-8 text-xs text-[#9CA3AF]">Not enough chronological data captured</div>
         )}
+      </div>
+
+      {/* Segmented Distraction breakdown */}
+      <div className="bg-[#0A0A0F] border border-[#2A2A35] rounded-lg p-4 space-y-3">
+        <h3 className="font-sans font-bold text-xs text-[#F5F5F7] flex items-center space-x-1.5 select-none">
+          <ShieldAlert className="w-4 h-4 text-[#8B5CF6]" />
+          <span>Distraction Diagnostic Breakdown</span>
+        </h3>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-[#15151D] border border-[#2A2A35] p-3 rounded-lg text-center space-y-1.5">
+            <div className="flex justify-center">
+              <AlertTriangle className="w-4.5 h-4.5 text-amber-500" />
+            </div>
+            <div>
+              <span className="block text-[9px] uppercase tracking-wider font-extrabold text-[#9CA3AF]">Looked Away</span>
+              <span className="block font-mono text-xl font-black text-[#F5F5F7] mt-1">{lookAwayCount} <span className="text-[10px] text-gray-500 font-sans font-normal">times</span></span>
+              <span className="block text-[8px] text-gray-500 font-medium mt-0.5">Sideway glance duration</span>
+            </div>
+          </div>
+          
+          <div className="bg-[#15151D] border border-[#2A2A35] p-3 rounded-lg text-center space-y-1.5">
+            <div className="flex justify-center">
+              <Smartphone className="w-4.5 h-4.5 text-[#8B5CF6]" />
+            </div>
+            <div>
+              <span className="block text-[9px] uppercase tracking-wider font-extrabold text-[#9CA3AF]">Phone Presence</span>
+              <span className="block font-mono text-xl font-black text-[#F5F5F7] mt-1">{phoneCount} <span className="text-[10px] text-gray-500 font-sans font-normal">times</span></span>
+              <span className="block text-[8px] text-gray-500 font-medium mt-0.5">Mobile devices active</span>
+            </div>
+          </div>
+          
+          <div className="bg-[#15151D] border border-[#2A2A35] p-3 rounded-lg text-center space-y-1.5">
+            <div className="flex justify-center">
+              <Move className="w-4.5 h-4.5 text-blue-400" />
+            </div>
+            <div>
+              <span className="block text-[9px] uppercase tracking-wider font-extrabold text-[#9CA3AF]">Erratic Motion</span>
+              <span className="block font-mono text-xl font-black text-[#F5F5F7] mt-1">{movementCount} <span className="text-[10px] text-gray-500 font-sans font-normal">times</span></span>
+              <span className="block text-[8px] text-gray-500 font-medium mt-0.5">Unsettled desk activity</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Motivation Dialogue bar */}

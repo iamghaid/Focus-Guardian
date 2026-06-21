@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, AlertCircle, ShieldCheck, RefreshCw, Eye, Sliders, AlertTriangle } from 'lucide-react';
+import { Camera, AlertCircle, ShieldCheck, RefreshCw, Eye, Sliders, AlertTriangle, Smartphone, Zap, Activity } from 'lucide-react';
 import { FocusState } from '../types';
 
 interface CameraTrackerProps {
   currentState: FocusState;
   onStateChange: (state: FocusState) => void;
   onDrowsinessChange: (isDrowsy: boolean) => void;
-  sensitivity: number; // 1 to 10
+  sensitivity: number; // 1 (Relaxed), 2 (Balanced), 3 (Strict)
+  onPhoneOccurrence: () => void;
+  onMovementOccurrence: () => void;
+  onLookAwayOccurrence: () => void;
 }
 
 export const CameraTracker: React.FC<CameraTrackerProps> = ({
@@ -14,6 +17,9 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   onStateChange,
   onDrowsinessChange,
   sensitivity,
+  onPhoneOccurrence,
+  onMovementOccurrence,
+  onLookAwayOccurrence,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,6 +34,10 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const [simulatedSetting, setSimulatedSetting] = useState<FocusState>(FocusState.FOCUSED);
   const [simulatedDrowsy, setSimulatedDrowsy] = useState(false);
 
+  // Active distraction manual simulator triggers (for both webcam and simulation use)
+  const [isSimulatingPhone, setIsSimulatingPhone] = useState(false);
+  const [isSimulatingMovement, setIsSimulatingMovement] = useState(false);
+
   // Model statuses
   const [modelsLoaded, setModelsLoaded] = useState(false);
 
@@ -36,9 +46,27 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const [currentAsymmetry, setCurrentAsymmetry] = useState<number | null>(null);
   const [facePositionOffset, setFacePositionOffset] = useState<number | null>(null);
   
-  // Distraction grace period tracking
+  // Look Away Distraction grace period tracking
   const consecutiveDistractionTicksRef = useRef<number>(0);
   const [distractionGraceSeconds, setDistractionGraceSeconds] = useState<number>(0);
+
+  // Handheld phone distraction grace tracking
+  const consecutivePhoneTicksRef = useRef<number>(0);
+  const [phoneGraceSeconds, setPhoneGraceSeconds] = useState<number>(0);
+
+  // Erratic motion distraction grace tracking
+  const consecutiveMovementTicksRef = useRef<number>(0);
+  const [movementGraceSeconds, setMovementGraceSeconds] = useState<number>(0);
+
+  // Frame translation relative position memory
+  const lastNosePositionRef = useRef<{ x: number, y: number } | null>(null);
+  const isErraticMovementDetectedRef = useRef<boolean>(false);
+  const [liveErraticMotionDetected, setLiveErraticMotionDetected] = useState(false);
+
+  // Trigger period lockout states
+  const lookAwayTriggeredThisPeriodRef = useRef(false);
+  const phoneTriggeredThisPeriodRef = useRef(false);
+  const movementTriggeredThisPeriodRef = useRef(false);
 
   // Timers and stream references
   const streamRef = useRef<MediaStream | null>(null);
@@ -51,6 +79,9 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const sensitivityRef = useRef(sensitivity);
   const onDrowsinessChangeRef = useRef(onDrowsinessChange);
   const onStateChangeRef = useRef(onStateChange);
+  const onPhoneOccurrenceRef = useRef(onPhoneOccurrence);
+  const onMovementOccurrenceRef = useRef(onMovementOccurrence);
+  const onLookAwayOccurrenceRef = useRef(onLookAwayOccurrence);
 
   useEffect(() => {
     isSimulatingRef.current = isSimulating;
@@ -67,6 +98,44 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   useEffect(() => {
     onStateChangeRef.current = onStateChange;
   }, [onStateChange]);
+
+  useEffect(() => {
+    onPhoneOccurrenceRef.current = onPhoneOccurrence;
+  }, [onPhoneOccurrence]);
+
+  useEffect(() => {
+    onMovementOccurrenceRef.current = onMovementOccurrence;
+  }, [onMovementOccurrence]);
+
+  useEffect(() => {
+    onLookAwayOccurrenceRef.current = onLookAwayOccurrence;
+  }, [onLookAwayOccurrence]);
+
+  const isSimulatingPhoneRef = useRef(isSimulatingPhone);
+  const isSimulatingMovementRef = useRef(isSimulatingMovement);
+  const simulatedSettingRef = useRef(simulatedSetting);
+  const simulatedDrowsyRef = useRef(simulatedDrowsy);
+  const currentStateRef = useRef(currentState);
+
+  useEffect(() => {
+    isSimulatingPhoneRef.current = isSimulatingPhone;
+  }, [isSimulatingPhone]);
+
+  useEffect(() => {
+    isSimulatingMovementRef.current = isSimulatingMovement;
+  }, [isSimulatingMovement]);
+
+  useEffect(() => {
+    simulatedSettingRef.current = simulatedSetting;
+  }, [simulatedSetting]);
+
+  useEffect(() => {
+    simulatedDrowsyRef.current = simulatedDrowsy;
+  }, [simulatedDrowsy]);
+
+  useEffect(() => {
+    currentStateRef.current = currentState;
+  }, [currentState]);
 
   // Keep track of state transitions in refs to avoid double triggers
   useEffect(() => {
@@ -240,34 +309,110 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
     if (!faceapi) return;
 
     detectionIntervalRef.current = setInterval(async () => {
-      const video = videoRef.current;
-      if (!video || video.paused || video.ended || isSimulatingRef.current) return;
+      // Resolve dynamic thresholds based on sensitivity
+      const sensValue = sensitivityRef.current;
+      let maxGraceSeconds = 5; // Balanced default
+      let asymmetryThreshold = 1.65;
+      let offCenterThreshold = 0.25;
+      let awayThresholdSeconds = 5;
 
-      try {
-        // Resolve dynamic thresholds based on sensitivity
-        const sensValue = sensitivityRef.current;
-        let maxGraceSeconds = 5; // Balanced default
-        let asymmetryThreshold = 1.65;
-        let offCenterThreshold = 0.25;
-        let awayThresholdSeconds = 5;
+      if (sensValue === 1) { // Relaxed
+        maxGraceSeconds = 8;
+        asymmetryThreshold = 2.0;
+        offCenterThreshold = 0.35;
+        awayThresholdSeconds = 8;
+      } else if (sensValue === 3) { // Strict
+        maxGraceSeconds = 2;
+        asymmetryThreshold = 1.35;
+        offCenterThreshold = 0.18;
+        awayThresholdSeconds = 3;
+      } else { // Balanced (2 or default)
+        maxGraceSeconds = 5;
+        asymmetryThreshold = 1.65;
+        offCenterThreshold = 0.25;
+        awayThresholdSeconds = 5;
+      }
 
-        if (sensValue === 1) { // Relaxed
-          maxGraceSeconds = 8;
-          asymmetryThreshold = 2.0;
-          offCenterThreshold = 0.35;
-          awayThresholdSeconds = 8;
-        } else if (sensValue === 3) { // Strict
-          maxGraceSeconds = 2;
-          asymmetryThreshold = 1.35;
-          offCenterThreshold = 0.18;
-          awayThresholdSeconds = 3;
-        } else { // Balanced (2 or default)
-          maxGraceSeconds = 5;
-          asymmetryThreshold = 1.65;
-          offCenterThreshold = 0.25;
-          awayThresholdSeconds = 5;
+      // -- BRACH A: SIMULATOR ACTIVE --
+      if (isSimulatingRef.current) {
+        // 1. Sideways Look grace calculation
+        const lookAwayActive = simulatedSettingRef.current === FocusState.DISTRACTED && !simulatedDrowsyRef.current;
+        if (lookAwayActive) {
+          consecutiveDistractionTicksRef.current += 1;
+          const currentDistractedSec = Math.floor(consecutiveDistractionTicksRef.current * 0.5);
+          setDistractionGraceSeconds(currentDistractedSec);
+
+          if (currentDistractedSec >= maxGraceSeconds) {
+            onStateChangeRef.current(FocusState.DISTRACTED);
+            if (!lookAwayTriggeredThisPeriodRef.current) {
+              lookAwayTriggeredThisPeriodRef.current = true;
+              onLookAwayOccurrenceRef.current();
+            }
+          } else {
+            onStateChangeRef.current(FocusState.FOCUSED);
+          }
+        } else {
+          consecutiveDistractionTicksRef.current = 0;
+          setDistractionGraceSeconds(0);
+          lookAwayTriggeredThisPeriodRef.current = false;
         }
 
+        // 2. Phone Active grace calculation
+        const phoneActive = isSimulatingPhoneRef.current || (simulatedSettingRef.current === FocusState.DISTRACTED && simulatedDrowsyRef.current);
+        if (phoneActive) {
+          consecutivePhoneTicksRef.current += 1;
+          const currentPhoneSec = Math.floor(consecutivePhoneTicksRef.current * 0.5);
+          setPhoneGraceSeconds(currentPhoneSec);
+
+          if (currentPhoneSec >= 5) {
+            if (!phoneTriggeredThisPeriodRef.current) {
+              phoneTriggeredThisPeriodRef.current = true;
+              onPhoneOccurrenceRef.current();
+            }
+          }
+        } else {
+          consecutivePhoneTicksRef.current = 0;
+          setPhoneGraceSeconds(0);
+          phoneTriggeredThisPeriodRef.current = false;
+        }
+
+        // 3. Erratic Movement grace calculation
+        const movementActive = isSimulatingMovementRef.current;
+        setLiveErraticMotionDetected(movementActive);
+        if (movementActive) {
+          consecutiveMovementTicksRef.current += 1;
+          const currentMovementSec = Math.floor(consecutiveMovementTicksRef.current * 0.5);
+          setMovementGraceSeconds(currentMovementSec);
+
+          if (currentMovementSec >= 5) {
+            if (!movementTriggeredThisPeriodRef.current) {
+              movementTriggeredThisPeriodRef.current = true;
+              onMovementOccurrenceRef.current();
+            }
+          }
+        } else {
+          consecutiveMovementTicksRef.current = 0;
+          setMovementGraceSeconds(0);
+          movementTriggeredThisPeriodRef.current = false;
+        }
+
+        // 4. Away state simulation
+        if (simulatedSettingRef.current === FocusState.AWAY) {
+          onStateChangeRef.current(FocusState.AWAY);
+        }
+
+        // Update simulator feedback metrics
+        setCurrentEAR(simulatedDrowsyRef.current ? 0.14 : 0.28);
+        setCurrentAsymmetry(lookAwayActive ? 2.3 : 1.1);
+        setFacePositionOffset(lookAwayActive ? 0.35 : 0.04);
+        return;
+      }
+
+      // -- BRANCH B: REAL CAMERA TRACKER ACTIVE --
+      const video = videoRef.current;
+      if (!video || video.paused || video.ended) return;
+
+      try {
         // Detect single face with landmarks using optimized tiny face detector options
         const detection = await faceapi.detectSingleFace(
           video,
@@ -281,7 +426,6 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           setFacePositionOffset(null);
           onDrowsinessChangeRef.current(false);
 
-          // Reset distraction grace counters
           consecutiveDistractionTicksRef.current = 0;
           setDistractionGraceSeconds(0);
 
@@ -329,32 +473,86 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         setCurrentAsymmetry(asymmetry);
 
         // Check if drowsy / closed eyes (avgEAR < 0.17 is closed/very drowsy)
-        const isDrowsy = avgEAR < 0.17;
-        onDrowsinessChangeRef.current(isDrowsy);
+        const isCurrentlyDrowsy = avgEAR < 0.17;
+        onDrowsinessChangeRef.current(isCurrentlyDrowsy);
 
-        // Focus Decision:
-        // Horizontal sideways head turn OR out of bounds/off center
+        // Calculate nose vector tracking frame delta for real erratic motion
+        if (lastNosePositionRef.current) {
+          const dx = Math.abs(nosePoint.x - lastNosePositionRef.current.x);
+          const dy = Math.abs(nosePoint.y - lastNosePositionRef.current.y);
+          const delta = Math.sqrt(dx * dx + dy * dy);
+          
+          // Higher motion threshold for relaxed sensitivity, strict registers movement quickly
+          const movementDeltaLimit = sensValue === 1 ? 55 : sensValue === 3 ? 20 : 32;
+          
+          // Classify frame movement
+          isErraticMovementDetectedRef.current = (delta > movementDeltaLimit);
+        }
+        lastNosePositionRef.current = { x: nosePoint.x, y: nosePoint.y };
+
+        // 1. Handle sideways Look Away detection
         const isHeadTurned = asymmetry > asymmetryThreshold;
         const isOffCenter = offsetPercent > offCenterThreshold;
 
         if (isHeadTurned || isOffCenter) {
-          // Yes: User has turned sideways or moved off screen.
-          // Increment consecutive distraction frames (interval runs every 500ms)
           consecutiveDistractionTicksRef.current += 1;
           const currentDistractedSec = Math.floor(consecutiveDistractionTicksRef.current * 0.5);
           setDistractionGraceSeconds(currentDistractedSec);
 
           if (currentDistractedSec >= maxGraceSeconds) {
             onStateChangeRef.current(FocusState.DISTRACTED);
+            if (!lookAwayTriggeredThisPeriodRef.current) {
+              lookAwayTriggeredThisPeriodRef.current = true;
+              onLookAwayOccurrenceRef.current();
+            }
           } else {
-            // Under grace period, report layout as Focused to prevent instant penalty
             onStateChangeRef.current(FocusState.FOCUSED);
           }
         } else {
           // Looking back straight: reset grace counter silently
           consecutiveDistractionTicksRef.current = 0;
           setDistractionGraceSeconds(0);
+          lookAwayTriggeredThisPeriodRef.current = false;
           onStateChangeRef.current(FocusState.FOCUSED);
+        }
+
+        // 2. Handle Phone active detection via webcam simulated toggle
+        const phoneActive = isSimulatingPhoneRef.current;
+        if (phoneActive) {
+          consecutivePhoneTicksRef.current += 1;
+          const currentPhoneSec = Math.floor(consecutivePhoneTicksRef.current * 0.5);
+          setPhoneGraceSeconds(currentPhoneSec);
+
+          if (currentPhoneSec >= 5) {
+            if (!phoneTriggeredThisPeriodRef.current) {
+              phoneTriggeredThisPeriodRef.current = true;
+              onPhoneOccurrenceRef.current();
+            }
+          }
+        } else {
+          consecutivePhoneTicksRef.current = 0;
+          setPhoneGraceSeconds(0);
+          phoneTriggeredThisPeriodRef.current = false;
+        }
+
+        // 3. Handle Erratic movement tracking (combines physical delta + button mock)
+        const movementActive = isSimulatingMovementRef.current || isErraticMovementDetectedRef.current;
+        setLiveErraticMotionDetected(movementActive);
+        if (movementActive) {
+          consecutiveMovementTicksRef.current += 1;
+          const currentMovementSec = Math.floor(consecutiveMovementTicksRef.current * 0.5);
+          setMovementGraceSeconds(currentMovementSec);
+
+          if (currentMovementSec >= 5) {
+            if (!movementTriggeredThisPeriodRef.current) {
+              movementTriggeredThisPeriodRef.current = true;
+              onMovementOccurrenceRef.current();
+            }
+          }
+        } else {
+          consecutiveMovementTicksRef.current = 0;
+          setMovementGraceSeconds(0);
+          movementTriggeredThisPeriodRef.current = false;
         }
 
       } catch (err) {
@@ -546,18 +744,24 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           )}
 
           {/* Distraction Grace Warning HUD overlay */}
-          {!isSimulating && distractionGraceSeconds > 0 && currentState === FocusState.FOCUSED && (
+          {currentState === FocusState.FOCUSED && (distractionGraceSeconds > 0 || phoneGraceSeconds > 0 || movementGraceSeconds > 0) && (
             <div className="absolute top-3 left-3 right-3 bg-amber-500/95 backdrop-blur-md text-slate-950 px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg border border-amber-400/30 z-10 animate-[bounce_1.5s_infinite]">
               <div className="flex items-center space-x-2">
                 <AlertTriangle className="w-4.5 h-4.5 text-slate-950 shrink-0" />
                 <div className="text-left leading-tight">
-                  <p className="font-sans font-bold text-xs uppercase tracking-wider border-b border-slate-950/20 pb-0.5">Distraction Warning</p>
-                  <p className="font-sans text-[10px] opacity-90 mt-0.5">Please focus back on your screen</p>
+                  <p className="font-sans font-bold text-xs uppercase tracking-wider border-b border-slate-950/20 pb-0.5">
+                    {distractionGraceSeconds > 0 ? 'Looking Away' : phoneGraceSeconds > 0 ? 'Phone Detected' : 'Erratic Movement'}
+                  </p>
+                  <p className="font-sans text-[10px] opacity-90 mt-0.5">Please focus back to preserve your session</p>
                 </div>
               </div>
               <div className="flex flex-col items-end leading-none">
                 <span className="font-mono font-black text-sm">
-                  {distractionGraceSeconds}s / {maxGraceSeconds}s
+                  {distractionGraceSeconds > 0 
+                    ? `${distractionGraceSeconds}s / ${maxGraceSeconds}s` 
+                    : phoneGraceSeconds > 0 
+                      ? `${phoneGraceSeconds}s / 5s` 
+                      : `${movementGraceSeconds}s / 5s`}
                 </span>
                 <span className="text-[8px] uppercase font-bold tracking-widest opacity-80 mt-0.5">Grace Period</span>
               </div>
@@ -617,6 +821,57 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
             )}
           </span>
         </div>
+      </div>
+
+      {/* Manual Distraction Simulators Grid (Always accessible for testing the chances warning design) */}
+      <div className="bg-[#111116] border border-[#2A2A35]/40 p-3 rounded-lg flex flex-col space-y-2 select-none">
+        <p className="text-[9px] uppercase tracking-wider font-extrabold text-[#9CA3AF] flex items-center space-x-1">
+          <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500/20" />
+          <span>Manual Distraction Injector (Webcam & Simulation compatible)</span>
+        </p>
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            onClick={() => setIsSimulatingPhone(p => !p)}
+            className={`cursor-pointer text-[10px] uppercase tracking-widest font-bold py-2 rounded-md transition-all flex items-center justify-center space-x-1.5 border ${
+              isSimulatingPhone 
+                ? 'bg-[#8B5CF6]/25 border-[#8B5CF6] text-[#C084FC] shadow-inner shadow-[#8B5CF6]/10' 
+                : 'bg-[#1C1C24] border-[#2A2A35] text-gray-400 hover:text-white hover:bg-[#20202B]'
+            }`}
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>{isSimulatingPhone ? 'Put Phone Down' : 'Hold Phone to Ear'}</span>
+          </button>
+
+          <button
+            onClick={() => setIsSimulatingMovement(m => !m)}
+            className={`cursor-pointer text-[10px] uppercase tracking-widest font-bold py-2 rounded-md transition-all flex items-center justify-center space-x-1.5 border ${
+              isSimulatingMovement 
+                ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-inner' 
+                : 'bg-[#1C1C24] border-[#2A2A35] text-gray-400 hover:text-white hover:bg-[#20202B]'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>{isSimulatingMovement ? 'Settle Motion' : 'Simulate Movement'}</span>
+          </button>
+        </div>
+
+        {/* Realtime progress bars to show timer counting up to 5s */}
+        {(isSimulatingPhone || isSimulatingMovement || liveErraticMotionDetected) && (
+          <div className="text-[9px] text-[#9CA3AF] font-mono leading-relaxed pt-1 border-t border-[#2A2A35]/30 space-y-1">
+            {isSimulatingPhone && (
+              <div className="flex justify-between items-center">
+                <span>Phone holding grace:</span>
+                <span className="font-bold text-[#F5F5F7] bg-black/40 px-1 rounded">{phoneGraceSeconds}s / 5s</span>
+              </div>
+            )}
+            {(isSimulatingMovement || liveErraticMotionDetected) && (
+              <div className="flex justify-between items-center">
+                <span>Erratic motion grace:</span>
+                <span className="font-bold text-[#F5F5F7] bg-black/40 px-1 rounded">{movementGraceSeconds}s / 5s</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Simulator / Real Toggle Buttons */}

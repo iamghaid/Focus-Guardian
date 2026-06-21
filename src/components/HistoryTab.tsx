@@ -201,8 +201,17 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({
                   <td className="p-4 text-gray-400 font-mono">
                     {Math.round(item.focusTime)}s
                   </td>
-                  <td className="p-4 font-mono font-bold text-center text-red-400/90">
-                    {item.distractedCount}
+                  <td className="p-4 text-center font-mono">
+                    <span className="font-bold text-red-400/90 inline-block">
+                      {item.distractedCount}
+                    </span>
+                    {(item.phoneCount !== undefined || item.lookAwayCount !== undefined || item.movementCount !== undefined) && (
+                      <div className="text-[9px] text-gray-500 font-mono mt-1 flex justify-center items-center gap-1 leading-none select-none">
+                        <span title="Phone presence detection" className="text-[#8B5CF6] font-semibold bg-[#8B5CF6]/5 px-1 py-0.5 rounded">📱 {item.phoneCount || 0}</span>
+                        <span title="Sideways look away detection" className="text-amber-500 font-semibold bg-amber-500/5 px-1 py-0.5 rounded">↔️ {item.lookAwayCount || 0}</span>
+                        <span title="Erratic motion detection" className="text-blue-400 font-semibold bg-blue-400/5 px-1 py-0.5 rounded">🏃 {item.movementCount || 0}</span>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -19,6 +19,9 @@ export interface SessionHistory {
   distractedTime: number; // seconds
   awayTime: number; // seconds
   timeline: TimelineEvent[];
+  lookAwayCount?: number;
+  phoneCount?: number;
+  movementCount?: number;
 }
 
 export interface Settings {
