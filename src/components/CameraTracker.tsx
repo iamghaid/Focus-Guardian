@@ -40,6 +40,8 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
   // Model statuses
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const cocoModelRef = useRef<any>(null); // Real object-detection model (detects an actual phone, not a head-angle guess)
+  const liveCameraPhoneDetectedRef = useRef(false);
 
   // Metrics for visualization
   const [currentEAR, setCurrentEAR] = useState<number | null>(null);
@@ -176,6 +178,40 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         
         if (!modelsLoadedSuccessfully) {
           throw lastModelError || new Error('Neural network models failed to download.');
+        }
+
+        // Load real object-detection model (COCO-SSD) to actually recognize a phone in frame
+        if (active) {
+          try {
+            setLoadingProgress('Loading object recognition model (phone detection)...');
+            if (!(window as any).tf) {
+              await new Promise<void>((resolve, reject) => {
+                const tfScript = document.createElement('script');
+                tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+                tfScript.async = true;
+                tfScript.onload = () => resolve();
+                tfScript.onerror = () => reject(new Error('Failed to load TensorFlow.js'));
+                document.head.appendChild(tfScript);
+              });
+            }
+            if (!(window as any).cocoSsd) {
+              await new Promise<void>((resolve, reject) => {
+                const cocoScript = document.createElement('script');
+                cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd/dist/coco-ssd.min.js';
+                cocoScript.async = true;
+                cocoScript.onload = () => resolve();
+                cocoScript.onerror = () => reject(new Error('Failed to load COCO-SSD'));
+                document.head.appendChild(cocoScript);
+              });
+            }
+            const cocoSsd = (window as any).cocoSsd;
+            if (cocoSsd) {
+              cocoModelRef.current = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+            }
+          } catch (objErr) {
+            console.warn('Object-detection model failed to load; falling back to head-angle heuristic for phone detection.', objErr);
+            cocoModelRef.current = null;
+          }
         }
 
         if (!active) return;
@@ -328,10 +364,13 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
       setDistractionGraceSeconds(seconds);
       
       if (seconds >= 5) {
+        onStateChangeRef.current(FocusState.DISTRACTED);
         if (!lookAwayTriggeredThisPeriodRef.current) {
           lookAwayTriggeredThisPeriodRef.current = true;
           onLookAwayOccurrenceRef.current();
         }
+      } else {
+        onStateChangeRef.current(FocusState.FOCUSED);
       }
     } else {
       consecutiveDistractionTicksRef.current = 0;
@@ -378,20 +417,12 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
       movementTriggeredThisPeriodRef.current = false;
     }
 
-    // Resolve unified overall state
-    let simOverallState = FocusState.FOCUSED;
+    // Away active simulation
     if (simulatedSettingRef.current === FocusState.AWAY) {
-      simOverallState = FocusState.AWAY;
-    } else if (
-      consecutiveDistractionTicksRef.current * 0.5 >= 5 ||
-      consecutivePhoneTicksRef.current * 0.5 >= 5 ||
-      consecutiveMovementTicksRef.current * 0.5 >= 5
-    ) {
-      simOverallState = FocusState.DISTRACTED;
+      onStateChangeRef.current(FocusState.AWAY);
+    } else if (simulatedSettingRef.current === FocusState.FOCUSED && !lookAwayActive) {
+      onStateChangeRef.current(FocusState.FOCUSED);
     }
-
-    onStateChangeRef.current(simOverallState);
-    console.log(`Frame check: ${simOverallState}`);
 
     // Generate simulated coordinates/telemetry readouts
     setCurrentEAR(simulatedDrowsyRef.current ? 0.13 : 0.28);
@@ -439,14 +470,10 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
       // Start buffer toward continuous AWAY (requires 5 continuous seconds)
       if (awayTimerStartRef.current === null) {
         awayTimerStartRef.current = Date.now();
-        console.log("Frame check: FOCUSED (AWAY countdown tracking)");
       } else {
         const secondsDifference = (Date.now() - awayTimerStartRef.current) / 1000;
         if (secondsDifference >= 5) {
           onStateChangeRef.current(FocusState.AWAY);
-          console.log("Frame check: AWAY");
-        } else {
-          console.log("Frame check: FOCUSED (AWAY countdown tracking)");
         }
       }
       return;
@@ -454,6 +481,17 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
     // Reset buffer timer since face was found
     awayTimerStartRef.current = null;
+
+    // REAL phone detection: run object detection on the live video frame to see an actual phone
+    if (cocoModelRef.current && !isSimulatingPhoneRef.current) {
+      try {
+        const predictions = await cocoModelRef.current.detect(video);
+        const phoneSeen = predictions.some((p: any) => p.class === 'cell phone' && p.score > 0.5);
+        liveCameraPhoneDetectedRef.current = phoneSeen;
+      } catch (objErr) {
+        // Keep last known value on transient detection errors
+      }
+    }
 
     const positions = detection.landmarks.positions;
 
@@ -513,10 +551,14 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
     // DETECT STATES DEFINITIONS:
     const isHeadTurned = asymmetry > 1.65;
     const isOffCenter = offsetPercent > 0.25;
-    const lookAwayActive = isHeadTurned || isOffCenter;
 
-    // Smart phone holding camera posture heuristic (extreme asymmetry OR tilted posture plus jaw distortion)
-    const cameraPhoneActive = isSimulatingPhoneRef.current || (asymmetry > 1.7 && eyeSlope > 0.13) || (asymmetry > 1.95);
+    // Real phone holding = an actual detected phone object (falls back to a conservative
+    // head-tilt heuristic ONLY if the object-detection model failed to load)
+    const cameraPhoneActive = isSimulatingPhoneRef.current || liveCameraPhoneDetectedRef.current ||
+      (!cocoModelRef.current && asymmetry > 1.95 && eyeSlope > 0.18);
+
+    // Looking away is now independent from phone detection (no more overlap/confusion)
+    const lookAwayActive = (isHeadTurned || isOffCenter) && !cameraPhoneActive;
     const movementActive = isSimulatingMovementRef.current || liveMovement;
 
     // 1. LOOK AWAY COUNTDOWN (Start countdown, trigger warning after 5 continuous seconds looking away)
@@ -526,10 +568,13 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
       setDistractionGraceSeconds(seconds);
 
       if (seconds >= 5) {
+        onStateChangeRef.current(FocusState.DISTRACTED);
         if (!lookAwayTriggeredThisPeriodRef.current) {
           lookAwayTriggeredThisPeriodRef.current = true;
           onLookAwayOccurrenceRef.current();
         }
+      } else {
+        onStateChangeRef.current(FocusState.FOCUSED);
       }
     } else {
       consecutiveDistractionTicksRef.current = 0;
@@ -579,9 +624,11 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
                               (consecutivePhoneTicksRef.current * 0.5 >= 5) || 
                               (consecutiveMovementTicksRef.current * 0.5 >= 5);
                               
-    const resolvedState = overallDistracted ? FocusState.DISTRACTED : FocusState.FOCUSED;
-    onStateChangeRef.current(resolvedState);
-    console.log(`Frame check: ${resolvedState}`);
+    if (overallDistracted) {
+      onStateChangeRef.current(FocusState.DISTRACTED);
+    } else {
+      onStateChangeRef.current(FocusState.FOCUSED);
+    }
   }
 
   // Calculate Eye Aspect Ratio (EAR)
@@ -722,37 +769,26 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           )}
 
           {/* Distraction Grace Warning HUD overlays */}
-          {/* Distraction Grace Warning HUD overlays */}
-          {(currentState === FocusState.FOCUSED || currentState === FocusState.DISTRACTED) && (distractionGraceSeconds > 0 || phoneGraceSeconds > 0 || movementGraceSeconds > 0) && (
-            <div className="absolute top-3 left-3 right-3 bg-amber-500/95 backdrop-blur-md text-slate-950 px-4 py-3 rounded-xl flex flex-col space-y-2 shadow-2xl border border-amber-400/40 z-10 animate-fade-in">
-              <div className="flex items-center space-x-2.5">
-                <AlertTriangle className="w-5 h-5 text-slate-950 shrink-0 animate-pulse" />
-                <div className="text-left leading-tight flex-grow">
-                  <p className="font-sans font-extrabold text-xs">
-                    {phoneGraceSeconds > 0 
-                      ? 'Stop using your phone — put it away to continue.' 
-                      : distractionGraceSeconds > 0 
-                        ? 'You are looking away — please look back at the screen to continue.' 
-                        : 'Erratic movement — please settle down to continue.'}
+          {currentState === FocusState.FOCUSED && (distractionGraceSeconds > 0 || phoneGraceSeconds > 0 || movementGraceSeconds > 0) && (
+            <div className="absolute top-3 left-3 right-3 bg-amber-500/95 backdrop-blur-md text-slate-950 px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg border border-amber-400/30 z-10 animate-[bounce_1.5s_infinite]">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="w-4.5 h-4.5 text-slate-950 shrink-0" />
+                <div className="text-left leading-tight">
+                  <p className="font-sans font-bold text-xs uppercase tracking-wider border-b border-slate-950/20 pb-0.5">
+                    {distractionGraceSeconds > 0 ? 'Looking Away' : phoneGraceSeconds > 0 ? 'Phone Detected' : 'Erratic Movement'}
                   </p>
-                  <p className="font-sans text-[10px] opacity-80 mt-1">
-                    {phoneGraceSeconds > 0 
-                      ? 'Put your phone completely aside to cancel this alert.' 
-                      : distractionGraceSeconds > 0 
-                        ? 'Look straight back at your display to resume.' 
-                        : 'Calm down to preserve focus block logs.'}
-                  </p>
+                  <p className="font-sans text-[10px] opacity-90 mt-0.5">Please focus back to preserve your session</p>
                 </div>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-950/15 pt-2 mt-1">
-                <span className="text-[9px] uppercase tracking-wider font-extrabold opacity-75">Grace period countdown</span>
-                <span className="font-mono font-black text-sm bg-slate-950 text-amber-400 px-2 py-0.5 rounded shadow">
-                  {phoneGraceSeconds > 0 
-                    ? `${Math.max(0, 5 - phoneGraceSeconds).toFixed(1)}s` 
-                    : distractionGraceSeconds > 0 
-                      ? `${Math.max(0, 5 - distractionGraceSeconds).toFixed(1)}s` 
-                      : `${Math.max(0, 5 - movementGraceSeconds).toFixed(1)}s`}
+              <div className="flex flex-col items-end leading-none">
+                <span className="font-mono font-black text-sm">
+                  {distractionGraceSeconds > 0 
+                    ? `${(5 - distractionGraceSeconds).toFixed(1)}s` 
+                    : phoneGraceSeconds > 0 
+                      ? `${(5 - phoneGraceSeconds).toFixed(1)}s` 
+                      : `${(5 - movementGraceSeconds).toFixed(1)}s`}
                 </span>
+                <span className="text-[8px] uppercase font-bold tracking-widest opacity-80 mt-0.5">Time Remaining</span>
               </div>
             </div>
           )}
