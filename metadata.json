@@ -1,0 +1,8 @@
+{
+  "name": "Focus Guardian",
+  "description": "A webcam-based study focus tracker that uses computer vision to detect whether the user is studying, distracted, or away from their desk, and alerts them in real time.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
