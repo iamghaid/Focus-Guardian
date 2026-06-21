@@ -30,7 +30,7 @@ export default function App() {
       focusDuration: 25,
       breakDuration: 5,
       soundEnabled: true,
-      sensitivity: 5
+      sensitivity: 2
     };
   });
 
@@ -64,6 +64,28 @@ export default function App() {
   const distractedContinuousSeconds = useRef<number>(0);
   const awayContinuousSeconds = useRef<number>(0);
   const drowsyContinuousSeconds = useRef<number>(0);
+
+  // Refs to prevent state/prop closures in setInterval, and to prevent interval recreation every second
+  const focusStateRef = useRef(focusState);
+  const isDrowsyRef = useRef(isDrowsy);
+  const soundEnabledRef = useRef(settings.soundEnabled);
+  const sessionModeRef = useRef(sessionMode);
+
+  useEffect(() => {
+    focusStateRef.current = focusState;
+  }, [focusState]);
+
+  useEffect(() => {
+    isDrowsyRef.current = isDrowsy;
+  }, [isDrowsy]);
+
+  useEffect(() => {
+    soundEnabledRef.current = settings.soundEnabled;
+  }, [settings.soundEnabled]);
+
+  useEffect(() => {
+    sessionModeRef.current = sessionMode;
+  }, [sessionMode]);
 
   // Toast notifications manager
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -108,9 +130,12 @@ export default function App() {
 
     if (isTimerRunning) {
       // Log starting state if timeline is totally empty
-      if (elapsedSecondsCount === 0 && sessionTimeline.length === 0) {
-        setSessionTimeline([{ timeOffset: 0, state: focusState }]);
-      }
+      setSessionTimeline(curr => {
+        if (curr.length === 0) {
+          return [{ timeOffset: 0, state: focusStateRef.current }];
+        }
+        return curr;
+      });
 
       interval = setInterval(() => {
         // 1. Tick down timer countdown
@@ -124,48 +149,50 @@ export default function App() {
         });
 
         // 2. Accumulate chronological statistics (only during FOCUS session)
-        if (sessionMode === 'FOCUS') {
+        if (sessionModeRef.current === 'FOCUS') {
           setElapsedSecondsCount(prevSec => {
             const nextSec = prevSec + 1;
             
             // Record focus state stats
-            if (focusState === FocusState.FOCUSED) {
+            const currentState = focusStateRef.current;
+            if (currentState === FocusState.FOCUSED) {
               setFocusedSeconds(f => f + 1);
               distractedContinuousSeconds.current = 0;
               awayContinuousSeconds.current = 0;
-            } else if (focusState === FocusState.DISTRACTED) {
+            } else if (currentState === FocusState.DISTRACTED) {
               setDistractedSeconds(d => d + 1);
               distractedContinuousSeconds.current += 1;
               awayContinuousSeconds.current = 0;
 
-              // Distracted continuous alerts (>= 5 continuous seconds)
-              if (distractedContinuousSeconds.current >= 5) {
-                if (settings.soundEnabled) {
+              // Since the camera tracker filters distractions and only triggers FocusState.DISTRACTED
+              // after the required consecutive seconds grace period has surpassed:
+              // we alert them IMMEDIATELY upon entering this state, and thereafter every 5 seconds.
+              if (distractedContinuousSeconds.current === 1 || distractedContinuousSeconds.current % 5 === 0) {
+                if (soundEnabledRef.current) {
                   playAlertBeep();
                 }
                 addToast('Stay focused! 🎯', 'distracted');
                 setDistractedAlertCount(c => c + 1);
-                distractedContinuousSeconds.current = 0; // reset buffer
               }
-            } else if (focusState === FocusState.AWAY) {
+            } else if (currentState === FocusState.AWAY) {
               setAwaySeconds(a => a + 1);
               awayContinuousSeconds.current += 1;
               distractedContinuousSeconds.current = 0;
 
-              // Away continuous alerts (>= 8 continuous seconds)
-              if (awayContinuousSeconds.current >= 8) {
-                if (settings.soundEnabled) {
+              // Similarly, since the camera tracker already buffers AWAY state for several seconds,
+              // we can alert and pause immediately upon state entry.
+              if (awayContinuousSeconds.current === 1) {
+                if (soundEnabledRef.current) {
                   playAlertBeep();
                 }
                 // Pause active countdown timer automatically
                 setIsTimerRunning(false);
-                addToast('You stepped away — timer paused', 'away');
-                awayContinuousSeconds.current = 0; // reset buffer
+                addToast('You stepped away — timer paused ⏳', 'away');
               }
             }
 
             // Record eye closure drowsiness alert
-            if (isDrowsy) {
+            if (isDrowsyRef.current) {
               drowsyContinuousSeconds.current += 1;
               if (drowsyContinuousSeconds.current >= 4) {
                 addToast('Drowsiness alert! Please rest or take a break ☕', 'drowsy');
@@ -179,7 +206,7 @@ export default function App() {
             if (nextSec % 10 === 0) {
               setSessionTimeline(curr => [
                 ...curr,
-                { timeOffset: nextSec, state: focusState }
+                { timeOffset: nextSec, state: currentState }
               ]);
             }
 
@@ -193,7 +220,7 @@ export default function App() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, focusState, sessionMode, isDrowsy, settings.soundEnabled, elapsedSecondsCount]);
+  }, [isTimerRunning]);
 
   // Session Completed / Completed Callback
   const handleSessionComplete = () => {

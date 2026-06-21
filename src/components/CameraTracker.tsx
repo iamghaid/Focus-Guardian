@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, AlertCircle, ShieldCheck, RefreshCw, Eye, Sliders } from 'lucide-react';
+import { Camera, AlertCircle, ShieldCheck, RefreshCw, Eye, Sliders, AlertTriangle } from 'lucide-react';
 import { FocusState } from '../types';
 
 interface CameraTrackerProps {
@@ -35,12 +35,38 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
   const [currentEAR, setCurrentEAR] = useState<number | null>(null);
   const [currentAsymmetry, setCurrentAsymmetry] = useState<number | null>(null);
   const [facePositionOffset, setFacePositionOffset] = useState<number | null>(null);
+  
+  // Distraction grace period tracking
+  const consecutiveDistractionTicksRef = useRef<number>(0);
+  const [distractionGraceSeconds, setDistractionGraceSeconds] = useState<number>(0);
 
   // Timers and stream references
   const streamRef = useRef<MediaStream | null>(null);
   const detectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastStateRef = useRef<FocusState>(currentState);
   const awayTimerStartRef = useRef<number | null>(null); // To buffer AWAY state until > 4 seconds
+
+  // Keep copies of props/state in refs so our single-setup interval always reads the latest values without closures going stale
+  const isSimulatingRef = useRef(isSimulating);
+  const sensitivityRef = useRef(sensitivity);
+  const onDrowsinessChangeRef = useRef(onDrowsinessChange);
+  const onStateChangeRef = useRef(onStateChange);
+
+  useEffect(() => {
+    isSimulatingRef.current = isSimulating;
+  }, [isSimulating]);
+
+  useEffect(() => {
+    sensitivityRef.current = sensitivity;
+  }, [sensitivity]);
+
+  useEffect(() => {
+    onDrowsinessChangeRef.current = onDrowsinessChange;
+  }, [onDrowsinessChange]);
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
 
   // Keep track of state transitions in refs to avoid double triggers
   useEffect(() => {
@@ -215,11 +241,34 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
 
     detectionIntervalRef.current = setInterval(async () => {
       const video = videoRef.current;
-      if (!video || video.paused || video.ended || isSimulating) return;
+      if (!video || video.paused || video.ended || isSimulatingRef.current) return;
 
       try {
+        // Resolve dynamic thresholds based on sensitivity
+        const sensValue = sensitivityRef.current;
+        let maxGraceSeconds = 5; // Balanced default
+        let asymmetryThreshold = 1.65;
+        let offCenterThreshold = 0.25;
+        let awayThresholdSeconds = 5;
+
+        if (sensValue === 1) { // Relaxed
+          maxGraceSeconds = 8;
+          asymmetryThreshold = 2.0;
+          offCenterThreshold = 0.35;
+          awayThresholdSeconds = 8;
+        } else if (sensValue === 3) { // Strict
+          maxGraceSeconds = 2;
+          asymmetryThreshold = 1.35;
+          offCenterThreshold = 0.18;
+          awayThresholdSeconds = 3;
+        } else { // Balanced (2 or default)
+          maxGraceSeconds = 5;
+          asymmetryThreshold = 1.65;
+          offCenterThreshold = 0.25;
+          awayThresholdSeconds = 5;
+        }
+
         // Detect single face with landmarks using optimized tiny face detector options
-        // We set inputSize to 160 for maximum performance/low resource usage while keeping accuracy
         const detection = await faceapi.detectSingleFace(
           video,
           new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
@@ -230,15 +279,19 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           setCurrentEAR(null);
           setCurrentAsymmetry(null);
           setFacePositionOffset(null);
-          onDrowsinessChange(false);
+          onDrowsinessChangeRef.current(false);
 
-          // Buffer AWAY state: Only declare AWAY if no face detected for more than 4 seconds
+          // Reset distraction grace counters
+          consecutiveDistractionTicksRef.current = 0;
+          setDistractionGraceSeconds(0);
+
+          // Buffer AWAY state: Only declare AWAY if no face detected for more than awayThresholdSeconds
           if (awayTimerStartRef.current === null) {
             awayTimerStartRef.current = Date.now();
           } else {
             const timeWithoutFace = Date.now() - awayTimerStartRef.current;
-            if (timeWithoutFace >= 4000) {
-              onStateChange(FocusState.AWAY);
+            if (timeWithoutFace >= awayThresholdSeconds * 1000) {
+              onStateChangeRef.current(FocusState.AWAY);
             }
           }
           return;
@@ -259,8 +312,6 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         const rightDist = Math.abs(jawRight.x - nosePoint.x);
         
         // Average eye aspect ratio (EAR) for drowsiness
-        // Left eye landmarks: 36 - 41
-        // Right eye landmarks: 42 - 47
         const leftEyeEAR = getEAR(positions, 36, 41);
         const rightEyeEAR = getEAR(positions, 42, 47);
         const avgEAR = (leftEyeEAR + rightEyeEAR) / 2.0;
@@ -277,28 +328,33 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
         const asymmetry = Math.max(leftDist, rightDist) / Math.max(1, Math.min(leftDist, rightDist));
         setCurrentAsymmetry(asymmetry);
 
-        // Check if drowsy / closed eyes (avgEAR < 0.16 indicates closed/very drowsy)
+        // Check if drowsy / closed eyes (avgEAR < 0.17 is closed/very drowsy)
         const isDrowsy = avgEAR < 0.17;
-        onDrowsinessChange(isDrowsy);
+        onDrowsinessChangeRef.current(isDrowsy);
 
-        // Focus Decision Tree:
-        // Asymmetry range slider sensitivity threshold (1 to 10)
-        // Level 10 sensitivity -> threshold is 1.25 (Very strict head turn detection)
-        // Level 1 sensitivity -> threshold is 2.80 (Very loose head turn detection)
-        const baseThreshold = 2.8 - (sensitivity * 0.155); 
-        
-        // Distracted is triggered if asymmetry is above threshold OR head is centered offset > 0.22
-        // OR if eye closure drowsiness is detected
-        const isHeadTurned = asymmetry > baseThreshold;
-        const isOffCenter = offsetPercent > 0.25;
+        // Focus Decision:
+        // Horizontal sideways head turn OR out of bounds/off center
+        const isHeadTurned = asymmetry > asymmetryThreshold;
+        const isOffCenter = offsetPercent > offCenterThreshold;
 
-        if (isDrowsy) {
-          // If drowsy/sleeping, mark as distracted or alert them
-          onStateChange(FocusState.DISTRACTED);
-        } else if (isHeadTurned || isOffCenter) {
-          onStateChange(FocusState.DISTRACTED);
+        if (isHeadTurned || isOffCenter) {
+          // Yes: User has turned sideways or moved off screen.
+          // Increment consecutive distraction frames (interval runs every 500ms)
+          consecutiveDistractionTicksRef.current += 1;
+          const currentDistractedSec = Math.floor(consecutiveDistractionTicksRef.current * 0.5);
+          setDistractionGraceSeconds(currentDistractedSec);
+
+          if (currentDistractedSec >= maxGraceSeconds) {
+            onStateChangeRef.current(FocusState.DISTRACTED);
+          } else {
+            // Under grace period, report layout as Focused to prevent instant penalty
+            onStateChangeRef.current(FocusState.FOCUSED);
+          }
         } else {
-          onStateChange(FocusState.FOCUSED);
+          // Looking back straight: reset grace counter silently
+          consecutiveDistractionTicksRef.current = 0;
+          setDistractionGraceSeconds(0);
+          onStateChangeRef.current(FocusState.FOCUSED);
         }
 
       } catch (err) {
@@ -385,6 +441,17 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
     [FocusState.DISTRACTED]: 'Distracted',
     [FocusState.AWAY]: 'Away',
   };
+
+  // Resolve current active thresholds based on sensitivity
+  let maxGraceSeconds = 5;
+  let asymmetryThreshold = 1.65;
+  if (sensitivity === 1) { // Relaxed
+    maxGraceSeconds = 8;
+    asymmetryThreshold = 2.0;
+  } else if (sensitivity === 3) { // Strict
+    maxGraceSeconds = 2;
+    asymmetryThreshold = 1.35;
+  }
 
   return (
     <div id="camera-tracker-panel" className="bg-[#15151D] border border-[#2A2A35] rounded-xl p-5 flex flex-col space-y-4 shadow-xl transition-all duration-300">
@@ -478,6 +545,25 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
             </>
           )}
 
+          {/* Distraction Grace Warning HUD overlay */}
+          {!isSimulating && distractionGraceSeconds > 0 && currentState === FocusState.FOCUSED && (
+            <div className="absolute top-3 left-3 right-3 bg-amber-500/95 backdrop-blur-md text-slate-950 px-4 py-2.5 rounded-xl flex items-center justify-between shadow-lg border border-amber-400/30 z-10 animate-[bounce_1.5s_infinite]">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="w-4.5 h-4.5 text-slate-950 shrink-0" />
+                <div className="text-left leading-tight">
+                  <p className="font-sans font-bold text-xs uppercase tracking-wider border-b border-slate-950/20 pb-0.5">Distraction Warning</p>
+                  <p className="font-sans text-[10px] opacity-90 mt-0.5">Please focus back on your screen</p>
+                </div>
+              </div>
+              <div className="flex flex-col items-end leading-none">
+                <span className="font-mono font-black text-sm">
+                  {distractionGraceSeconds}s / {maxGraceSeconds}s
+                </span>
+                <span className="text-[8px] uppercase font-bold tracking-widest opacity-80 mt-0.5">Grace Period</span>
+              </div>
+            </div>
+          )}
+
           {/* Fallback & Camera Permission Denied Overlay */}
           {!loading && cameraAllowed === false && !isSimulating && (
             <div className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center space-y-3 z-20 p-6 text-center">
@@ -523,8 +609,8 @@ export const CameraTracker: React.FC<CameraTrackerProps> = ({
           <span className="block text-gray-400 capitalize">Head asymmetry index</span>
           <span className="font-bold text-[#F5F5F7] text-xs">
             {currentAsymmetry !== null ? (
-              <span className={currentAsymmetry > (2.8 - sensitivity*0.155) ? 'text-[#FBBF24]' : 'text-[#34D399]'}>
-                {unifyAsymmetry(currentAsymmetry).toFixed(1)}° {currentAsymmetry > (2.8 - sensitivity*0.155) ? '(Looking away)' : '(Looking straight)'}
+              <span className={currentAsymmetry > asymmetryThreshold ? 'text-[#FBBF24]' : 'text-[#34D399]'}>
+                {unifyAsymmetry(currentAsymmetry).toFixed(1)}° {currentAsymmetry > asymmetryThreshold ? '(Looking away)' : '(Looking straight)'}
               </span>
             ) : (
               '-- (No face)'

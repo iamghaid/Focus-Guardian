@@ -120,29 +120,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
           </div>
 
-          {/* Distraction sensitivity slider */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs font-semibold text-[#F5F5F7]">
-              <span className="flex items-center space-x-1.5">
-                <Sliders className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                <span>AI Head Turn Sensitivity</span>
-              </span>
-              <span className="text-[#8B5CF6] font-bold font-mono">Lvl {sens}</span>
-            </div>
+          {/* Distraction sensitivity level selector */}
+          <div className="space-y-3">
+            <label className="block text-[10px] font-bold text-[#9CA3AF] uppercase tracking-wider mb-1 flex items-center space-x-1.5">
+              <Sliders className="w-3.5 h-3.5 text-[#8B5CF6]" />
+              <span>Guardian Shield Sensitivity</span>
+            </label>
             
-            <input
-              type="range"
-              min="1"
-              max="10"
-              step="1"
-              value={sens}
-              onChange={(e) => setSens(parseInt(e.target.value))}
-              className="w-full h-1 bg-[#1C1C24] rounded-lg appearance-none cursor-pointer accent-[#8B5CF6]"
-            />
-            
-            <div className="flex justify-between text-[8px] text-[#9CA3AF] uppercase font-bold px-1 select-none">
-              <span>Lazy (Hard to trigger)</span>
-              <span>Ultra Strict (Tight Ratio)</span>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { value: 1, label: 'Relaxed', desc: '8s Grace', sub: 'Easygoing' },
+                { value: 2, label: 'Balanced', desc: '5s Grace', sub: 'Recommended' },
+                { value: 3, label: 'Strict', desc: '2s Grace', sub: 'Rigid focus' },
+              ].map((lvl) => (
+                <button
+                  key={lvl.value}
+                  type="button"
+                  onClick={() => setSens(lvl.value)}
+                  className={`cursor-pointer p-2.5 rounded-lg border text-center transition-all ${
+                    sens === lvl.value
+                      ? 'bg-[#8B5CF6]/15 border-[#8B5CF6] text-[#F5F5F7] shadow-sm shadow-[#8B5CF6]/10'
+                      : 'bg-[#0A0A0F] border-[#2A2A35] text-[#9CA3AF] hover:border-[#3A3A4A] hover:bg-[#12121A]'
+                  }`}
+                >
+                  <span className="block text-[11px] font-extrabold uppercase tracking-wide">{lvl.label}</span>
+                  <span className={`block text-[9px] font-bold mt-1 ${sens === lvl.value ? 'text-[#8B5CF6]' : 'text-gray-400'}`}>{lvl.desc}</span>
+                  <span className="block text-[8px] text-gray-500 font-medium mt-0.5">{lvl.sub}</span>
+                </button>
+              ))}
             </div>
           </div>
 
